@@ -61,6 +61,7 @@ namespace idt {
 class visitor : public clang::RecursiveASTVisitor<visitor> {
   clang::ASTContext &context_;
   clang::SourceManager &source_manager_;
+  clang::Sema *sema;
 
   clang::DiagnosticBuilder
   unexported_public_interface(clang::SourceLocation location) {
@@ -91,7 +92,7 @@ class visitor : public clang::RecursiveASTVisitor<visitor> {
 
 public:
   explicit visitor(clang::ASTContext &context)
-      : context_(context), source_manager_(context.getSourceManager()) {}
+      : context_(context), source_manager_(context.getSourceManager()), sema(nullptr) {}
 
   bool VisitFunctionDecl(clang::FunctionDecl *FD) {
     clang::FullSourceLoc location = get_location(FD);
@@ -152,9 +153,14 @@ public:
                                              export_macro + " ");
     return true;
   }
+
+  void SetSema(clang::Sema& sema) {
+    this->sema = &sema;
+  }
+
 };
 
-class consumer : public clang::ASTConsumer {
+class consumer : public clang::SemaConsumer {
   struct fixit_options : clang::FixItOptions {
     fixit_options() {
       InPlace = inplace;
@@ -190,6 +196,10 @@ public:
 
     if (apply_fixits)
       rewriter_->WriteFixedFiles();
+  }
+
+  void InitializeSema(clang::Sema& sema) override {
+    visitor_.SetSema(sema);
   }
 };
 
