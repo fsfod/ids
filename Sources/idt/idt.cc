@@ -7,6 +7,9 @@
 #include "clang/Rewrite/Frontend/FixItRewriter.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Tooling.h"
+#include "clang/AST/DeclCXX.h"
+#include "clang/Sema/Sema.h"
+#include "clang/Sema/SemaConsumer.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -93,6 +96,59 @@ class visitor : public clang::RecursiveASTVisitor<visitor> {
 public:
   explicit visitor(clang::ASTContext &context)
       : context_(context), source_manager_(context.getSourceManager()), sema(nullptr) {}
+
+  bool VisitCXXRecordDecl(clang::CXXRecordDecl *D) {
+    clang::FullSourceLoc location = get_location(D);
+
+    // Ignore declarations from the system.
+    if (source_manager_.isInSystemHeader(location))
+      return true;
+
+    if (D->isImplicit() || !D->isThisDeclarationADefinition()) {
+      return true;
+    }
+
+    if (D->hasAttr<clang::DLLExportAttr>() ||
+        D->hasAttr<clang::DLLImportAttr>())
+      return true;
+
+    if (!isInsideMainFile(D->getLocation()))
+      return true;
+
+    if (D->isClass() || D->isStruct()) {
+      //D->dump();
+      clang::SourceLocation insertion_point1 = D->getLocation();
+      auto aroucerange = D->getSourceRange();
+      clang::SourceLocation insertion_point = D->getSourceRange().getEnd();// D->getDeclName().getAsIdentifierInfo();
+
+      location = context_.getFullLoc(D->getLocation()).getExpansionLoc();
+
+      if (D->needsImplicitCopyConstructor() || D->needsImplicitCopyAssignment() || D->needsImplicitMoveAssignment()) {
+        sema->ForceDeclarationOfImplicitMembers(D);
+
+        for (const auto* ctor : D->ctors()) {
+          if (ctor->isImplicit() && ctor->isDeleted()) {
+            // do something
+          }
+        }
+      }
+
+      unexported_public_interface(location)
+        << D
+        << clang::FixItHint::CreateInsertion(insertion_point,
+          export_macro + " ");
+      return true;
+    }
+  }
+
+
+  bool isInsideMainFile(clang::SourceLocation Loc) {
+    if (!Loc.isValid())
+      return false;
+    clang::FileID FID = source_manager_.getFileID(source_manager_.getExpansionLoc(Loc));
+    return FID == source_manager_.getMainFileID() || FID == source_manager_.getPreambleFileID();
+  }
+
 
   bool VisitFunctionDecl(clang::FunctionDecl *FD) {
     clang::FullSourceLoc location = get_location(FD);
