@@ -115,6 +115,13 @@ public:
     if (!isInsideMainFile(D->getLocation()))
       return true;
 
+    if (llvm::isa<clang::ClassTemplateSpecializationDecl>(D)) {
+      if (!D->hasExternalLexicalStorage()) {
+        return true;
+      }
+      location = context_.getFullLoc(D->getLocation()).getExpansionLoc();
+    }
+
     if (D->isClass() || D->isStruct()) {
       //D->dump();
       clang::SourceLocation insertion_point1 = D->getLocation();
