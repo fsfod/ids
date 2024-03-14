@@ -45,6 +45,11 @@ ignored_functions("ignore",
                   llvm::cl::CommaSeparated,
                   llvm::cl::cat(idt::category));
 
+llvm::cl::opt<bool>
+mainfileonly("mainfileonly", llvm::cl::init(false),
+  llvm::cl::desc("Only apply fixits to main files specified on the command line, not included headers"),
+  llvm::cl::cat(idt::category));
+
 template <typename Key, typename Compare, typename Allocator>
 bool contains(const std::set<Key, Compare, Allocator>& set, const Key& key) {
   return set.find(key) != set.end();
@@ -112,7 +117,7 @@ public:
         D->hasAttr<clang::DLLImportAttr>())
       return true;
 
-    if (!isInsideMainFile(D->getLocation()))
+    if (mainfileonly && !isInsideMainFile(D->getLocation()))
       return true;
 
     if (llvm::isa<clang::ClassTemplateSpecializationDecl>(D)) {
@@ -162,6 +167,9 @@ public:
 
     // Ignore declarations from the system.
     if (source_manager_.isInSystemHeader(location))
+      return true;
+
+    if (!isInsideMainFile(FD->getLocation()))
       return true;
 
     // We are only interested in non-dependent types.
