@@ -7,3 +7,5 @@
 .vs
 /build/
 CMakeUserPresets.json
+
+/Sources/idt/idt_pch.cpp
