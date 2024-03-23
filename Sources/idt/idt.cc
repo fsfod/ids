@@ -4,12 +4,16 @@
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Frontend/CompilerInstance.h"
+#include "clang/Frontend/FrontendAction.h"
 #include "clang/Rewrite/Frontend/FixItRewriter.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Tooling.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaConsumer.h"
+#include "clang/Lex/PPCallbacks.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -49,6 +53,12 @@ ignored_functions("ignore",
 llvm::cl::opt<bool>
 mainfileonly("mainfileonly", llvm::cl::init(false),
   llvm::cl::desc("Only apply fixits to main files specified on the command line, not included headers"),
+  llvm::cl::cat(idt::category));
+
+llvm::cl::opt<std::string>
+header_directory("headerdir",
+  llvm::cl::desc("Directory to recursively search for headers to rewrite"),
+  llvm::cl::value_desc("define"),
   llvm::cl::cat(idt::category));
 
 template <typename Key, typename Compare, typename Allocator>
@@ -289,14 +299,218 @@ struct factory : clang::tooling::FrontendActionFactory {
 };
 }
 
+class IncludeFinder : public clang::PPCallbacks {
+
+public:
+  explicit IncludeFinder(clang::Preprocessor *PP) 
+    : PP(PP), SM(PP->getSourceManager()) {
+  }
+
+  void InclusionDirective(clang::SourceLocation HashLoc,
+                          const clang::Token &IncludeTok,
+                          clang::StringRef FileName, bool IsAngled,
+                          clang::CharSourceRange FilenameRange,
+                          clang::OptionalFileEntryRef File,
+                          clang::StringRef SearchPath,
+                          clang::StringRef RelativePath,
+                          const clang::Module *Imported,
+                          clang::SrcMgr::CharacteristicKind FileType) override {
+
+    if (!File || IsAngled || SM.isInSystemHeader(HashLoc)) {
+      return; 
+    }
+
+    if (!File) return; // Handle cases where the included file is not found
+    llvm::SmallString<256> nativePath = File->getName();
+    llvm::sys::path::native(nativePath);
+ 
+    IncludedHeaders.insert(nativePath);
+
+    if (File->getName().contains("llvm") || File->getName().contains("clang")) {
+      //llvm::outs() << "Included file: " << File->getName() << "\n";
+    }
+
+  }
+
+  void FileChanged(SourceLocation Loc, FileChangeReason Reason,
+                   SrcMgr::CharacteristicKind NewFileType, FileID prevId) override {
+
+    if (Reason != EnterFile)
+      return;
+    auto fullloc = FullSourceLoc(Loc, SM);
+    FileID Id = fullloc.getFileID();
+    auto file = fullloc.getFileEntryRef();
+    if (file && !fullloc.isInSystemHeader()) {
+      auto name = file->getName();
+     // llvm::outs() << "  Entered: " << name << "\n";
+    } else {
+      return;
+    }
+  }
+
+  llvm::StringSet<> IncludedHeaders;
+private:
+  clang::SourceManager &SM;
+  clang::Preprocessor *PP;
+};
+
+typedef std::pair<std::string, llvm::StringSet<>> FileIncludeResults;
+
+class FindIncludesAction : public clang::PreprocessorFrontendAction {
+public:
+  FindIncludesAction(std::vector<FileIncludeResults>& includeList)
+    : headerIncludes(includeList) {
+
+  }
+protected:
+  void ExecuteAction() override {
+
+    clang::CompilerInstance &CI = getCompilerInstance();
+    auto &PP = CI.getPreprocessor();
+
+    auto includeFinders = new IncludeFinder(&PP);
+    PP.addPPCallbacks(std::unique_ptr<PPCallbacks>(includeFinders));
+    PP.IgnorePragmas();
+
+    // First let the preprocessor process the entire file and call callbacks.
+    // Callbacks will record which #include's were actually performed.
+    PP.EnterMainSourceFile();
+    Token Tok;
+    // Only preprocessor directives matter here, so disable macro expansion
+    // everywhere else as an optimization.
+    // TODO: It would be even faster if the preprocessor could be switched
+    // to a mode where it would parse only preprocessor directives and comments,
+    // nothing else matters for parsing or processing.
+    PP.SetMacroExpansionOnlyInDirectives();
+    do {
+      PP.Lex(Tok);
+      //if (Tok.is(tok::annot_module_begin))
+       // Rewrite->handleModuleBegin(Tok);
+    } while (Tok.isNot(tok::eof));
+   // RewriteMacrosInInput(CI.getPreprocessor(), OS.get());
+
+    auto &SM = PP.getSourceManager();
+    const auto &file = SM.getFileEntryRefForID(SM.getMainFileID());
+    headerIncludes.push_back(std::make_pair(file->getName().str(), includeFinders->IncludedHeaders));
+  }
+
+public:
+  std::vector<FileIncludeResults> &headerIncludes;
+};
+
+
+bool GatherHeadersInDirectory(llvm::StringRef directory, std::vector<std::string> &headerPaths) {
+  using namespace llvm::sys::fs;
+  using namespace llvm::sys;
+  std::error_code ec;
+
+  for (directory_iterator i(directory, ec), e; i != e; i.increment(ec)) {
+    if (ec) {
+      llvm::errs() << "Directory iterator error'ed when trying to find headers: " << ec.message();
+      return false;
+    }
+    std::string path = i->path();
+    if (i->type() == file_type::regular_file) {
+      if (path::extension(path) == ".h") {
+        headerPaths.push_back(i->path());
+      } else {
+        llvm::outs() << "Skipped non header file: " << i->path();
+      }
+    }
+  }
+  return true;
+}
+
+class FindIncludesFrontendActionFactory : public clang::tooling::FrontendActionFactory {
+public:
+  std::unique_ptr<FrontendAction> create() override {
+    return std::make_unique<FindIncludesAction>(headerIncludes);
+  }
+
+  std::vector<std::pair<std::string, llvm::StringSet<>>> headerIncludes;
+};
+
+bool GatherHeaders(clang::tooling::CommonOptionsParser &options, std::vector<std::string>& rootheaders) {
+  using namespace llvm::sys::fs;
+  using namespace clang::tooling;
+
+  std::vector<std::string> files;
+  if (!is_directory(header_directory)) {
+    llvm::errs() << "Header directory \"" << header_directory << "\" does not exist\n";
+    return false;
+  }
+  llvm::SmallString<256> NativePath;
+  llvm::sys::path::native(header_directory, NativePath);
+  if (!GatherHeadersInDirectory(header_directory, files)) {
+    return false;
+  }
+  auto factory = std::make_unique<FindIncludesFrontendActionFactory>();
+
+  ClangTool tool2(options.getCompilations(), files);
+  tool2.run(factory.get());
+
+  llvm::StringSet<> nonroots;
+  for (auto header : factory->headerIncludes) {
+    for (auto &path : header.second) {
+      nonroots.insert(path.getKey());
+    }
+  }
+
+  for (auto &path : files) {
+    if (!nonroots.contains(path)) {
+      rootheaders.push_back(path);
+    }
+  }
+
+  return true;
+}
+
 int main(int argc, char *argv[]) {
   using namespace clang::tooling;
+
 
   auto options =
       CommonOptionsParser::create(argc, const_cast<const char **>(argv),
                                   idt::category, llvm::cl::OneOrMore);
+
+  if (!options) {
+    llvm::logAllUnhandledErrors(std::move(options.takeError()), llvm::errs());
+    return EXIT_FAILURE;
+  }
+
+  if (!header_directory.empty()) {
+    std::vector<std::string> rootheaders;
+    if (!GatherHeaders(options.get(), rootheaders)) {
+      return EXIT_FAILURE;
+    }
+
+    std::string buffer;
+    buffer.reserve(1024);
+    llvm::raw_string_ostream stream(buffer);
+
+    for (auto &path : rootheaders) {
+      llvm::SmallString<256> slashpath;
+      llvm::sys::path::native(path, slashpath, llvm::sys::path::Style::windows_slash);
+
+      stream << "#include \"" << slashpath << "\"\n";
+      llvm::outs() << "RootHeader: " << slashpath << "\n";
+    }
+    stream.flush();
+
+    ClangTool tool{ options->getCompilations(), { "DummyCombined.cpp"} };
+    tool.mapVirtualFile("DummyCombined.cpp", buffer);
+
+    return tool.run(new idt::factory{});
+  } else {
+
+  }
+
+ // Clang->getPreprocessorOpts().addRemappedFile("<<< inputs >>>", MB);
+  //auto MB = llvm::MemoryBuffer::getMemBuffer(buffer);
+  
   if (options) {
-    ClangTool tool{options->getCompilations(), options->getSourcePathList()};
+    // options->getSourcePathList()
+    ClangTool tool{ options->getCompilations(),  options->getSourcePathList() };
     return tool.run(new idt::factory{});
   } else {
     llvm::logAllUnhandledErrors(std::move(options.takeError()), llvm::errs());
