@@ -404,17 +404,17 @@ bool GatherHeadersInDirectory(llvm::StringRef directory, std::vector<std::string
   using namespace llvm::sys;
   std::error_code ec;
 
-  for (directory_iterator i(directory, ec), e; i != e; i.increment(ec)) {
+  for (recursive_directory_iterator F(directory, ec), E; F != E; F.increment(ec)) {
     if (ec) {
       llvm::errs() << "Directory iterator error'ed when trying to find headers: " << ec.message();
       return false;
     }
-    std::string path = i->path();
-    if (i->type() == file_type::regular_file) {
+    std::string path = F->path();
+    if (F->type() == file_type::regular_file) {
       if (path::extension(path) == ".h") {
-        headerPaths.push_back(i->path());
+        headerPaths.push_back(F->path());
       } else {
-        llvm::outs() << "Skipped non header file: " << i->path();
+        llvm::outs() << "Skipped non header file: " << F->path() << "\n";
       }
     }
   }
