@@ -113,6 +113,13 @@ public:
   explicit visitor(clang::ASTContext &context)
       : context_(context), source_manager_(context.getSourceManager()), sema(nullptr) {}
 
+  bool TraverseNamespaceDecl(NamespaceDecl *ND) {
+    if (ND->isAnonymousNamespace()) {
+      return false;
+    }
+    return RecursiveASTVisitor::TraverseNamespaceDecl(ND);
+  }
+
   bool VisitCXXRecordDecl(clang::CXXRecordDecl *D) {
     clang::FullSourceLoc location = get_location(D);
 
