@@ -216,7 +216,7 @@ public:
     if (source_manager_.isInSystemHeader(location))
       return true;
 
-    if (!isInsideMainFile(FD->getLocation()))
+    if (mainfileonly && !isInsideMainFile(FD->getLocation()))
       return true;
 
     // We are only interested in non-dependent types.
@@ -227,8 +227,12 @@ public:
     if (FD->hasBody())
       return true;
 
+    if (llvm::isa<clang::FunctionTemplateDecl>(FD)) {
+      
+    }
+
     // Ignore friend declarations.
-    if (llvm::isa<clang::FriendDecl>(FD))
+    if (llvm::isa<clang::FriendDecl>(FD) || FD->isCXXClassMember())
       return true;
 
     // Ignore deleted and defaulted functions (e.g. operators).
@@ -250,13 +254,17 @@ public:
         return true;
     }
 
+    if (FD->hasAttr<BuiltinAttr>()) {
+      llvm::outs() << "Skipping builtin: " << FD->getName() << '\n';
+      return true;
+    }
+
     // If the function has a dll-interface, it is properly annotated.
     // TODO(compnerd) this should also handle `__visibility__`
     if (FD->hasAttr<clang::DLLExportAttr>() ||
         FD->hasAttr<clang::DLLImportAttr>())
       return true;
 
-    // Ignore known forward declarations (builtins)
     // TODO(compnerd) replace with std::set::contains in C++20
     if (contains(get_ignored_functions(), FD->getNameAsString()))
       return true;
