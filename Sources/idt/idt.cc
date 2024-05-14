@@ -334,6 +334,7 @@ struct action : clang::ASTFrontendAction {
   std::unique_ptr<clang::ASTConsumer>
   CreateASTConsumer(clang::CompilerInstance &CI, llvm::StringRef InFile) override {
     llvm::outs() << "Processing: " << InFile << '\n';
+    CI.getPreprocessor().SetSuppressIncludeNotFoundError(true);
     return std::make_unique<idt::consumer>(CI.getASTContext());
   }
 };
