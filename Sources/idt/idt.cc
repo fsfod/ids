@@ -332,7 +332,8 @@ public:
 
 struct action : clang::ASTFrontendAction {
   std::unique_ptr<clang::ASTConsumer>
-  CreateASTConsumer(clang::CompilerInstance &CI, llvm::StringRef) override {
+  CreateASTConsumer(clang::CompilerInstance &CI, llvm::StringRef InFile) override {
+    llvm::outs() << "Processing: " << InFile << '\n';
     return std::make_unique<idt::consumer>(CI.getASTContext());
   }
 };
