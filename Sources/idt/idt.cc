@@ -156,15 +156,16 @@ public:
     if (source_manager_.isInSystemHeader(location))
       return true;
 
-    if (D->isImplicit() || !D->isThisDeclarationADefinition()) {
+    if (mainfileonly && !isInsideMainFile(D->getLocation()))
       return true;
+
+    if (D->isImplicit() || !D->isThisDeclarationADefinition() || D->isTemplateDecl()) {
+      return true;
+    }
     }
 
     if (D->hasAttr<clang::DLLExportAttr>() ||
         D->hasAttr<clang::DLLImportAttr>())
-      return true;
-
-    if (mainfileonly && !isInsideMainFile(D->getLocation()))
       return true;
 
     if (llvm::isa<clang::ClassTemplateSpecializationDecl>(D)) {
