@@ -13,6 +13,7 @@
 #include "clang/Sema/SemaConsumer.h"
 #include "clang/Lex/PPCallbacks.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/GlobPattern.h"
 #include "llvm/Support/Path.h"
 
 #include <cstdlib>
@@ -61,6 +62,13 @@ header_directory("headerdir",
   llvm::cl::value_desc("define"),
   llvm::cl::cat(idt::category));
 
+llvm::cl::list<std::string>
+ignored_headers("header-ignore",
+  llvm::cl::desc("Ignore one or more header files"),
+  llvm::cl::value_desc("header[,header...]"),
+  llvm::cl::CommaSeparated,
+  llvm::cl::cat(idt::category));
+
 template <typename Key, typename Compare, typename Allocator>
 bool contains(const std::set<Key, Compare, Allocator>& set, const Key& key) {
   return set.find(key) != set.end();
@@ -75,6 +83,27 @@ const std::set<std::string> &get_ignored_functions() {
 }
 
 }
+
+const llvm::SmallVector<llvm::GlobPattern> &get_ignored_headers() {
+  static auto kIgnoredHeaders = [&]() -> auto {
+    llvm::SmallVector<llvm::GlobPattern> headers;
+    llvm::SmallString<256> root;
+    llvm::sys::path::native(header_directory, root);
+
+    for (const auto& P : ignored_headers) {
+      auto Patten = llvm::GlobPattern::create(P);
+      if (!Patten) {
+        llvm::outs() << "Bad header path glob " << P << Patten.takeError();
+      } else {
+        headers.push_back(std::move(Patten.get()));
+      }
+    }
+    return headers;
+  }();
+
+  return kIgnoredHeaders;
+}
+
 
 namespace idt {
 class visitor : public clang::RecursiveASTVisitor<visitor> {
@@ -452,6 +481,20 @@ bool GatherHeaders(clang::tooling::CommonOptionsParser &options, std::vector<std
     return false;
   }
   auto factory = std::make_unique<FindIncludesFrontendActionFactory>();
+
+  auto excludes = get_ignored_headers();
+  auto end = llvm::remove_if(files, [&](std::string &s) {
+    StringRef RelativePath = llvm::StringRef(s).substr(NativePath.size() + 1);
+    for (const auto& Pat : excludes) {
+      if (Pat.match(RelativePath)) {
+        llvm::errs() << "Skipped ignored header: " << s << "\n";
+        return true;
+      }
+    }
+    
+    return false;
+  });
+  files = std::vector(files.begin(), end);
 
   ClangTool tool2(options.getCompilations(), files);
   tool2.run(factory.get());
