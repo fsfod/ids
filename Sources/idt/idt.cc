@@ -34,6 +34,12 @@ export_macro("export-macro",
              llvm::cl::value_desc("define"), llvm::cl::Required,
              llvm::cl::cat(idt::category));
 
+llvm::cl::opt<std::string>
+function_export_macro("function-macro",
+  llvm::cl::desc("The macro to decorate non class functions with"),
+  llvm::cl::value_desc("define"), llvm::cl::Optional,
+  llvm::cl::cat(idt::category));
+
 llvm::cl::opt<bool>
 apply_fixits("apply-fixits", llvm::cl::init(false),
              llvm::cl::desc("Apply suggested changes to decorate interfaces"),
@@ -277,7 +283,7 @@ public:
     unexported_public_interface(location)
         << FD
         << clang::FixItHint::CreateInsertion(insertion_point,
-                                             export_macro + " ");
+                                             function_export_macro + " ");
     return true;
   }
 
@@ -537,6 +543,10 @@ int main(int argc, char *argv[]) {
   if (!options) {
     llvm::logAllUnhandledErrors(std::move(options.takeError()), llvm::errs());
     return EXIT_FAILURE;
+  }
+
+  if (function_export_macro == "") {
+    function_export_macro = export_macro.getValue();
   }
 
   if (!header_directory.empty()) {
