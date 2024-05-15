@@ -54,3 +54,6 @@ add_dependencies(idt idt_pch)
 
 target_compile_options(idt PRIVATE /Yu /Fp${PCH_OUTPUT})
 target_link_libraries(idt PRIVATE $<TARGET_OBJECTS:idt_pch>)
+
+ target_link_options(idt PRIVATE /INCREMENTAL)
+ endif()
