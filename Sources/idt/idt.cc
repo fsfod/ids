@@ -168,6 +168,12 @@ public:
     if (D->isImplicit() || !D->isThisDeclarationADefinition() || D->isTemplateDecl()) {
       return true;
     }
+
+    // Don't add DLL export to PoD structs that also have no methods
+    if (D->isStruct()) {
+      if (D->isPOD() && !llvm::any_of(D->methods(), [](const auto* MD) { return !MD->isImplicit(); })) {
+        return true;
+      }
     }
 
     if (D->hasAttr<clang::DLLExportAttr>() ||
