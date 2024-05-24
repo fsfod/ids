@@ -498,9 +498,10 @@ bool GatherHeaders(clang::tooling::CommonOptionsParser &options, std::vector<std
     llvm::errs() << "Header directory \"" << header_directory << "\" does not exist\n";
     return false;
   }
+
   llvm::SmallString<256> NativePath;
   llvm::sys::path::native(header_directory, NativePath);
-  if (!GatherHeadersInDirectory(header_directory, files)) {
+  if (!GatherHeadersInDirectory(NativePath, files)) {
     return false;
   }
   auto factory = std::make_unique<FindIncludesFrontendActionFactory>();
