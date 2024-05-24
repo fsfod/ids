@@ -169,6 +169,15 @@ public:
       return true;
     }
 
+    auto parent = D->getDeclContext();
+    auto templClass = D->getDescribedClassTemplate();
+
+    if (llvm::isa<clang::RecordDecl>(parent) || templClass) {
+      llvm::outs() << "Skipping " << D->getName() << " in " << location.getFileEntry()->getName() 
+                   << " line " << location.getLineNumber() << "\n";
+      return true;
+    }
+
     // Don't add DLL export to PoD structs that also have no methods
     if (D->isStruct()) {
       if (D->isPOD() && !llvm::any_of(D->methods(), [](const auto* MD) { return !MD->isImplicit(); })) {
