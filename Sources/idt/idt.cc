@@ -191,7 +191,7 @@ public:
       //D->dump();
       clang::SourceLocation insertion_point1 = D->getLocation();
       auto aroucerange = D->getSourceRange();
-      clang::SourceLocation insertion_point = D->getSourceRange().getEnd();// D->getDeclName().getAsIdentifierInfo();
+      clang::SourceLocation insertion_point = D->getLocation();
 
       location = context_.getFullLoc(D->getLocation()).getExpansionLoc();
 
