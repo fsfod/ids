@@ -575,10 +575,18 @@ int main(int argc, char *argv[]) {
     }
     stream.flush();
 
-    ClangTool tool{ options->getCompilations(), { "DummyCombined.cpp"} };
-    tool.mapVirtualFile("DummyCombined.cpp", buffer);
+    int result;
+    if (false) {
+      ClangTool tool{ options->getCompilations(), {rootheaders } };
 
-    return tool.run(new idt::factory{});
+      result = tool.run(new idt::factory{});
+    } else {
+      ClangTool tool{ options->getCompilations(), { "DummyCombined.cpp"} };
+      tool.mapVirtualFile("DummyCombined.cpp", buffer);
+      result = tool.run(new idt::factory{});
+    }
+
+    return result;
   } else {
 
   }
