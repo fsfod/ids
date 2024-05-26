@@ -121,7 +121,7 @@ class visitor : public clang::RecursiveASTVisitor<visitor> {
   unexported_public_interface(clang::SourceLocation location) {
     clang::DiagnosticsEngine &diagnostics_engine = context_.getDiagnostics();
 
-    static unsigned kID =
+    unsigned kID =
         diagnostics_engine.getCustomDiagID(clang::DiagnosticsEngine::Remark,
                                            "unexported public interface %0");
 
@@ -132,7 +132,7 @@ class visitor : public clang::RecursiveASTVisitor<visitor> {
   exported_private_interface(clang::SourceLocation location) {
     clang::DiagnosticsEngine &diagnostics_engine = context_.getDiagnostics();
 
-    static unsigned kID =
+    unsigned kID =
         diagnostics_engine.getCustomDiagID(clang::DiagnosticsEngine::Remark,
                                            "exported private interface %0");
 
