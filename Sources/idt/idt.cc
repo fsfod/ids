@@ -6,6 +6,7 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Rewrite/Frontend/FixItRewriter.h"
+#include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Tooling.h"
 #include "clang/AST/DeclCXX.h"
@@ -548,6 +549,28 @@ bool GatherHeaders(clang::tooling::CommonOptionsParser &options, std::vector<std
   return true;
 }
 
+class MemCDB : public clang::tooling::CompilationDatabase {
+public:
+  MemCDB(clang::tooling::CompilationDatabase &db) 
+    : DB(db) {
+  }
+
+  std::vector<clang::tooling::CompileCommand> getCompileCommands(StringRef F) const override {
+    return DB.getCompileCommands(F);
+  }
+
+  std::vector<std::string> getAllFiles() const override {
+    return DB.getAllFiles();
+  }
+
+  std::vector<clang::tooling::CompileCommand> getAllCompileCommands() const override {
+    throw std::logic_error("The method or operation is not implemented.");
+  }
+
+private:
+  clang::tooling::CompilationDatabase& DB;
+};
+
 int main(int argc, char *argv[]) {
   using namespace clang::tooling;
 
@@ -585,8 +608,10 @@ int main(int argc, char *argv[]) {
     stream.flush();
 
     int result;
-    if (false) {
-      ClangTool tool{ options->getCompilations(), {rootheaders } };
+    if (true) {
+      auto InferedDB = inferMissingCompileCommands(std::make_unique<MemCDB>(options->getCompilations()));
+
+      ClangTool tool{ *InferedDB.get(), {rootheaders}};
 
       result = tool.run(new idt::factory{});
     } else {
