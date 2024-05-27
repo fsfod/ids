@@ -588,6 +588,9 @@ int main(int argc, char *argv[]) {
     function_export_macro = export_macro.getValue();
   }
 
+  auto InferedDB = inferMissingCompileCommands(std::make_unique<MemCDB>(options->getCompilations()));
+
+  std::unique_ptr<ClangTool> tool;
   if (!header_directory.empty()) {
     std::vector<std::string> rootheaders;
     if (!GatherHeaders(options.get(), rootheaders)) {
@@ -607,33 +610,27 @@ int main(int argc, char *argv[]) {
     }
     stream.flush();
 
-    int result;
     if (true) {
-      auto InferedDB = inferMissingCompileCommands(std::make_unique<MemCDB>(options->getCompilations()));
 
-      ClangTool tool{ *InferedDB.get(), {rootheaders}};
 
-      result = tool.run(new idt::factory{});
+      tool = std::make_unique<ClangTool>(ClangTool(*InferedDB.get(), { rootheaders }));
+
+      
     } else {
       ClangTool tool{ options->getCompilations(), { "DummyCombined.cpp"} };
       tool.mapVirtualFile("DummyCombined.cpp", buffer);
-      result = tool.run(new idt::factory{});
     }
-
-    return result;
   } else {
-
+    tool = std::make_unique<ClangTool>(ClangTool(*InferedDB.get(), { options->getSourcePathList() }));
+    if (mainfileonly.getNumOccurrences() == 0) {
+      mainfileonly = true;
+    }
   }
+
+  int result;
+  result = tool->run(new idt::factory{});
+  return result;
 
  // Clang->getPreprocessorOpts().addRemappedFile("<<< inputs >>>", MB);
   //auto MB = llvm::MemoryBuffer::getMemBuffer(buffer);
-  
-  if (options) {
-    // options->getSourcePathList()
-    ClangTool tool{ options->getCompilations(),  options->getSourcePathList() };
-    return tool.run(new idt::factory{});
-  } else {
-    llvm::logAllUnhandledErrors(std::move(options.takeError()), llvm::errs());
-    return EXIT_FAILURE;
-  }
 }
