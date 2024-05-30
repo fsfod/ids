@@ -164,16 +164,15 @@ public:
   bool VisitCXXRecordDecl(clang::CXXRecordDecl *D) {
     clang::FullSourceLoc location = get_location(D);
 
-    // Ignore declarations from the system.
-    if (source_manager_.isInSystemHeader(location))
-      return true;
-
-    if (mainfileonly && !isInsideMainFile(D->getLocation()))
+    if (isLocationIgnored(location))
       return true;
 
     if (D->isImplicit() || !D->isThisDeclarationADefinition() || D->isTemplateDecl()) {
       return true;
     }
+
+    if (isAlreadyExported(D))
+      return true;
 
     auto parent = D->getDeclContext();
     auto templClass = D->getDescribedClassTemplate();
@@ -192,10 +191,6 @@ public:
         return true;
       }
     }
-
-    if (D->hasAttr<clang::DLLExportAttr>() ||
-        D->hasAttr<clang::DLLImportAttr>())
-      return true;
 
     if (llvm::isa<clang::ClassTemplateSpecializationDecl>(D)) {
       if (!D->hasExternalLexicalStorage()) {
@@ -230,23 +225,13 @@ public:
     }
   }
 
-
-  bool isInsideMainFile(clang::SourceLocation Loc) {
-    if (!Loc.isValid())
-      return false;
-    clang::FileID FID = source_manager_.getFileID(source_manager_.getExpansionLoc(Loc));
-    return FID == source_manager_.getMainFileID() || FID == source_manager_.getPreambleFileID();
-  }
-
-
   bool VisitFunctionDecl(clang::FunctionDecl *FD) {
     clang::FullSourceLoc location = get_location(FD);
 
-    // Ignore declarations from the system.
-    if (source_manager_.isInSystemHeader(location))
+    if (isLocationIgnored(location))
       return true;
 
-    if (mainfileonly && !isInsideMainFile(FD->getLocation()))
+    if (isAlreadyExported(FD))
       return true;
 
     // We are only interested in non-dependent types.
@@ -291,11 +276,6 @@ public:
       return true;
     }
 
-    // If the function has a dll-interface, it is properly annotated.
-    // TODO(compnerd) this should also handle `__visibility__`
-    if (FD->hasAttr<clang::DLLExportAttr>() ||
-        FD->hasAttr<clang::DLLImportAttr>())
-      return true;
 
     // TODO(compnerd) replace with std::set::contains in C++20
     if (contains(get_ignored_functions(), FD->getNameAsString()))
@@ -316,6 +296,28 @@ public:
     this->sema = &sema;
   }
 
+  bool isAlreadyExported(clang::Decl *D) {
+    return D->hasAttr<clang::DLLExportAttr>() ||
+           D->hasAttr<clang::DLLImportAttr>() ||
+           D->hasAttr<clang::VisibilityAttr>();
+  }
+
+  bool isLocationIgnored(clang::FullSourceLoc loc) {
+    if (source_manager_.isInSystemHeader(loc))
+      return true;
+
+    if (mainfileonly && !isInsideMainFile(loc))
+      return true;
+
+    return false;
+  }
+
+  bool isInsideMainFile(clang::SourceLocation Loc) {
+    if (!Loc.isValid())
+      return false;
+    clang::FileID FID = source_manager_.getFileID(source_manager_.getExpansionLoc(Loc));
+    return FID == source_manager_.getMainFileID() || FID == source_manager_.getPreambleFileID();
+  }
 };
 
 class RewritesReceiver : public clang::edit::EditsReceiver {
