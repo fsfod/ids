@@ -42,6 +42,12 @@ function_export_macro("function-macro",
   llvm::cl::value_desc("define"), llvm::cl::Optional,
   llvm::cl::cat(idt::category));
 
+llvm::cl::opt<std::string>
+template_export_macro("template-macro",
+  llvm::cl::desc("The macro to decorate non class functions with"),
+  llvm::cl::value_desc("define"), llvm::cl::Optional,
+  llvm::cl::cat(idt::category));
+
 llvm::cl::opt<bool>
 apply_fixits("apply-fixits", llvm::cl::init(false),
              llvm::cl::desc("Apply suggested changes to decorate interfaces"),
@@ -223,6 +229,91 @@ public:
           export_macro + " ");
       return true;
     }
+  }
+
+  bool VisitClassTemplateDecl(clang::ClassTemplateDecl *CTD) {
+    //llvm::dbgs() << "ClassTemplateDecl: " << CTD->getNameAsString() << " is definition: " << CTD->isThisDeclarationADefinition() << " visible: " << CTD->isExternallyVisible() << "\n";
+    return true;
+  }
+
+  bool VisitClassTemplateSpecializationDecl(clang::ClassTemplateSpecializationDecl *CTSD) {
+    llvm::dbgs() << "TemplateDecl: " << CTSD->getNameAsString()  << ", Body: " << CTSD->hasBody() 
+                 << ", Definition: " << CTSD->hasDefinition() << ", Specialization Kind: " 
+                 << CTSD->getSpecializationKind() << "\n";
+    clang::FullSourceLoc location = get_location(CTSD);
+    llvm::StringRef filename = source_manager_.getFilename(location);
+
+    if (isLocationIgnored(location))
+      return true;
+
+    if (isAlreadyExported(CTSD))
+      return true;
+
+#if 0 
+    if (CTSD->isThisDeclarationADefinition())
+      return true;
+
+    llvm::dbgs() << "Not a declaration\n";
+#endif
+
+    // We only want export full class specialization
+    if (llvm::isa<ClassTemplatePartialSpecializationDecl>(CTSD))
+      return true;
+
+    if (CTSD->isExplicitSpecialization())
+      llvm::dbgs() << "Is explicit specialization\n";
+
+    if (CTSD->isClassScopeExplicitSpecialization())
+      return true;
+
+    clang::SourceLocation insertion_point;
+    std::string exportMacro;
+
+    location.dump();
+    if (CTSD->getTemplateSpecializationKind() == TSK_ExplicitInstantiationDeclaration) {
+      exportMacro = template_export_macro;
+      if (!CTSD->getExternLoc().isValid())
+        return true;
+
+      if (!CTSD->hasExternalFormalLinkage()) {
+        llvm::dbgs() << "NO external formal linkage\n";
+        return true;
+      }
+
+      int offset = 6;
+      if (CTSD->getSpecializedTemplate()->getTemplatedDecl()->isStruct())
+        offset = 7;
+      clang::SourceLocation insertion_point = CTSD->getExternLoc();
+      insertion_point = CTSD->getSpecializedTemplate()->getBeginLoc();
+      insertion_point = location.getLocWithOffset(offset);
+
+    } else {
+      exportMacro = export_macro;
+      // Don't try to export explicit specializations with no out of line methods
+      bool allInlineMethods = llvm::none_of(CTSD->methods(), [](const clang::CXXMethodDecl* MD) { 
+        return !MD->isImplicit() && !MD->hasBody(); 
+      });
+
+      // Check for any non inline static fields that inline methods could reference 
+      bool noStaticFields = llvm::none_of(CTSD->fields(), [](const clang::FieldDecl* FD) {
+        if (const VarDecl *VD = dyn_cast<VarDecl>(FD)) {
+          return VD->isStaticDataMember() && !VD->hasInit();
+        }
+        return false;
+      });
+
+      if (allInlineMethods && noStaticFields) {
+        return true;
+      }
+
+      insertion_point = CTSD->getLocation();
+    }
+
+    unexported_public_interface(location)
+      << CTSD
+      << clang::FixItHint::CreateInsertion(insertion_point,
+        exportMacro + " ");
+    return true;
   }
 
   bool VisitFunctionDecl(clang::FunctionDecl *FD) {
