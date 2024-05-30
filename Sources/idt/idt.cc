@@ -205,7 +205,7 @@ public:
 
       location = context_.getFullLoc(D->getLocation()).getExpansionLoc();
 
-      if (D->needsImplicitCopyConstructor() || D->needsImplicitCopyAssignment() || D->needsImplicitMoveAssignment()) {
+      if (D->needsImplicitCopyConstructor() || D->needsImplicitCopyAssignment() || D->needsImplicitMoveAssignment() || D->needsImplicitDestructor()) {
         sema->ForceDeclarationOfImplicitMembers(D);
 
         for (const auto* ctor : D->ctors()) {
