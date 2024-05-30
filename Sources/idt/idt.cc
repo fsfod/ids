@@ -3,6 +3,7 @@
 
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/Diagnostic.h"
+#include "clang/Edit/EditsReceiver.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Rewrite/Frontend/FixItRewriter.h"
@@ -317,6 +318,21 @@ public:
 
 };
 
+class RewritesReceiver : public clang::edit::EditsReceiver {
+  Rewriter &Rewrite;
+
+public:
+  RewritesReceiver(Rewriter &Rewrite) : Rewrite(Rewrite) {}
+
+  void insert(SourceLocation loc, StringRef text) override {
+    Rewrite.InsertText(loc, text);
+  }
+
+  void replace(CharSourceRange range, StringRef text) override {
+    Rewrite.ReplaceText(range.getBegin(), Rewrite.getRangeSize(range), text);
+  }
+};
+
 class consumer : public clang::SemaConsumer {
   struct fixit_options : clang::FixItOptions {
     fixit_options() {
@@ -335,15 +351,20 @@ class consumer : public clang::SemaConsumer {
   std::unique_ptr<clang::FixItRewriter> rewriter_;
 
 public:
-  explicit consumer(clang::ASTContext &context)
-      : visitor_(context) {}
+  explicit consumer(clang::ASTContext &context, llvm::StringMap<std::string> &allFileChanges)
+      : visitor_(context), filechanges(allFileChanges) {}
+
+
+  llvm::StringMap<std::string>& filechanges;
 
   void HandleTranslationUnit(clang::ASTContext &context) override {
+    SourceManager& SM = context.getSourceManager();
+
     if (apply_fixits) {
       clang::DiagnosticsEngine &diagnostics_engine = context.getDiagnostics();
       rewriter_ =
           std::make_unique<clang::FixItRewriter>(diagnostics_engine,
-                                                 context.getSourceManager(),
+                                                 SM,
                                                  context.getLangOpts(),
                                                  &options_);
       diagnostics_engine.setClient(rewriter_.get(), /*ShouldOwnClient=*/false);
@@ -351,8 +372,32 @@ public:
 
     visitor_.TraverseDecl(context.getTranslationUnitDecl());
 
-    if (apply_fixits)
-      rewriter_->WriteFixedFiles();
+    if (apply_fixits) {
+      RewritesReceiver Rec(rewriter_->Rewrite);
+      rewriter_->Editor.applyRewrites(Rec);
+
+      // rewriter_->WriteFixedFiles();
+      for (auto I = rewriter_->buffer_begin(), 
+                E = rewriter_->buffer_end(); I != E; I++) {
+        OptionalFileEntryRef Entry = SM.getFileEntryRefForID(I->first);
+
+        StringRef name = Entry->getName();
+        auto pair = filechanges.try_emplace(name);
+        if (pair.second) {
+          std::string output;
+          llvm::raw_string_ostream OS(output);
+
+          RewriteBuffer &RewriteBuf = I->second;
+          RewriteBuf.write(OS);
+          OS.flush();
+
+          pair.first->second = std::move(output);
+        } else {
+          llvm::outs() << "Skipped duplicate write to: " << name << '\n';
+        }
+      }
+
+    }
   }
 
   void InitializeSema(clang::Sema& sema) override {
@@ -361,17 +406,25 @@ public:
 };
 
 struct action : clang::ASTFrontendAction {
+  llvm::StringMap<std::string>& filechanges;
+
+  action(llvm::StringMap<std::string> &filechanges) 
+    : filechanges(filechanges) {
+
+  }
+
   std::unique_ptr<clang::ASTConsumer>
   CreateASTConsumer(clang::CompilerInstance &CI, llvm::StringRef InFile) override {
     llvm::outs() << "Processing: " << InFile << '\n';
     CI.getPreprocessor().SetSuppressIncludeNotFoundError(true);
-    return std::make_unique<idt::consumer>(CI.getASTContext());
+    return std::make_unique<idt::consumer>(CI.getASTContext(), filechanges);
   }
 };
 
 struct factory : clang::tooling::FrontendActionFactory {
+  llvm::StringMap<std::string> allfilechanges;
   std::unique_ptr<clang::FrontendAction> create() override {
-    return std::make_unique<idt::action>();
+    return std::make_unique<idt::action>(allfilechanges);
   }
 };
 }
@@ -636,7 +689,35 @@ int main(int argc, char *argv[]) {
   }
 
   int result;
-  result = tool->run(new idt::factory{});
+  auto factory = std::make_unique<idt::factory>();
+  result = tool->run(factory.get());
+
+  if (!factory->allfilechanges.empty()) {
+    llvm::outs() << "Files to modify:\n";
+    for (auto & pair : factory->allfilechanges) {
+      llvm::StringRef filename = pair.first();
+      llvm::outs() << "  " << filename << '\n';
+    }
+    char c;
+    llvm::outs() << "Commit changes Yes, No?\n";
+    if (!std::cin.get(c) || c != 'y') {
+      return 1;
+    }
+  }
+
+  for (auto & pair : factory->allfilechanges){
+    std::error_code EC;
+    std::unique_ptr<llvm::raw_fd_ostream> OS;
+    llvm::StringRef filename = pair.first();
+    OS.reset(new llvm::raw_fd_ostream(filename, EC, llvm::sys::fs::OF_None));
+    if (EC) {
+      llvm::errs() << "Unable to open" << filename << EC.message();
+      continue;
+    }
+    OS->write(pair.second.c_str(), pair.second.size());
+    OS->flush();
+  }
+
   return result;
 
  // Clang->getPreprocessorOpts().addRemappedFile("<<< inputs >>>", MB);
