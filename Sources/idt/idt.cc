@@ -147,7 +147,11 @@ class visitor : public clang::RecursiveASTVisitor<visitor> {
 
 public:
   explicit visitor(clang::ASTContext &context)
-      : context_(context), source_manager_(context.getSourceManager()), sema(nullptr) {}
+      : context_(context), source_manager_(context.getSourceManager()), sema(nullptr) {
+
+  }
+
+  bool debuglog = false;
 
   bool TraverseNamespaceDecl(NamespaceDecl *ND) {
     if (ND->isAnonymousNamespace()) {
@@ -174,8 +178,10 @@ public:
     auto templClass = D->getDescribedClassTemplate();
 
     if (llvm::isa<clang::RecordDecl>(parent) || templClass) {
-      llvm::outs() << "Skipping " << D->getName() << " in " << location.getFileEntry()->getName() 
-                   << " line " << location.getLineNumber() << "\n";
+      if (debuglog) {
+        llvm::dbgs() << "Skipping " << D->getName() << " in " << location.getFileEntry()->getName()
+                     << " line " << location.getLineNumber() << "\n";
+      }
       return true;
     }
 
@@ -278,7 +284,9 @@ public:
     }
 
     if (FD->hasAttr<BuiltinAttr>()) {
-      llvm::outs() << "Skipping builtin: " << FD->getName() << '\n';
+      if (debuglog) {
+        llvm::outs() << "Skipping builtin: " << FD->getName() << '\n';
+      }
       return true;
     }
 
