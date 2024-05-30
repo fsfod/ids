@@ -474,7 +474,9 @@ public:
                 E = rewriter_->buffer_end(); I != E; I++) {
         OptionalFileEntryRef Entry = SM.getFileEntryRefForID(I->first);
 
-        StringRef name = Entry->getName();
+        llvm::SmallString<255> name = Entry->getName();
+        llvm::sys::path::native(name);
+
         auto pair = filechanges.try_emplace(name);
         if (pair.second) {
           std::string output;
