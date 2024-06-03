@@ -168,6 +168,9 @@ public:
   }
 
   bool VisitCXXRecordDecl(clang::CXXRecordDecl *D) {
+    if (D->isEnum())
+      return true;
+
     clang::FullSourceLoc location = get_location(D);
 
     if (isLocationIgnored(location))
@@ -181,36 +184,98 @@ public:
       return true;
 
     auto parent = D->getDeclContext();
-    auto templClass = D->getDescribedClassTemplate();
+    // Skip non templated class/structs in a templated type
+    if (D->isDependentContext())
+      return true;
 
-    if (llvm::isa<clang::RecordDecl>(parent) || templClass) {
-      if (debuglog) {
-        llvm::dbgs() << "Skipping " << D->getName() << " in " << location.getFileEntry()->getName()
-                     << " line " << location.getLineNumber() << "\n";
+    bool outOfLineMembers = llvm::any_of(D->methods(), [](const clang::CXXMethodDecl* MD) {
+      return !MD->isImplicit() && !MD->hasBody() && !MD->isDeleted() && !MD->isDefaulted(); 
+    });
+
+    bool staticFields = llvm::any_of(D->fields(), [](const clang::FieldDecl* FD) {
+      if (const VarDecl *VD = dyn_cast<VarDecl>(FD)) {
+        return VD->isStaticDataMember() && !VD->hasInit();
       }
+      return false;
+    });
+
+    bool requiresExport = outOfLineMembers || staticFields;
+
+    // Don't add DLL export to PoD structs that also have no methods
+    if (D->isStruct() && !requiresExport) {
+      LogSkippedDecl(D, location, " that is SimpleStruct");
       return true;
     }
 
-    // Don't add DLL export to PoD structs that also have no methods
-    if (D->isStruct()) {
-      if (D->isPOD() && !llvm::any_of(D->methods(), [](const auto* MD) { return !MD->isImplicit(); })) {
+    // Check if this ia nested class or struct
+    if (const RecordDecl *PD = dyn_cast<clang::RecordDecl>(parent)) {
+      assert(PD->isClass() || PD->isStruct() || PD->isUnion());
+
+      // Skip nested class and structs that have no methods or there all declared inside the declaration
+      if (!requiresExport) {
         return true;
       }
     }
 
-    if (llvm::isa<clang::ClassTemplateSpecializationDecl>(D)) {
-      if (!D->hasExternalLexicalStorage()) {
-        return true;
+    auto templClass = D->getDescribedClassTemplate();
+    if (templClass) {
+      return true;
+    }
+
+    clang::SourceLocation insertion_point = D->getLocation();
+    std::string exportMacro = export_macro;
+
+    if (const auto *CTSD = dyn_cast<clang::ClassTemplateSpecializationDecl>(D)) {
+      if (debuglog) {
+        llvm::outs() << "TemplateDecl: " << CTSD->getNameAsString() << ", Body: " << CTSD->hasBody()
+          << ", Definition: " << CTSD->hasDefinition() << ", Specialization Kind: "
+          << CTSD->getSpecializationKind() << "\n";
       }
-      location = context_.getFullLoc(D->getLocation()).getExpansionLoc();
+
+      // We only want export full class specialization
+      if (llvm::isa<ClassTemplatePartialSpecializationDecl>(CTSD))
+        return true;
+
+      // Skip nested classes
+      if (CTSD->isClassScopeExplicitSpecialization())
+        return true;
+
+      if (CTSD->getTemplateSpecializationKind() == TSK_ExplicitInstantiationDeclaration) {
+        exportMacro = template_export_macro;
+        if (!CTSD->getExternLoc().isValid())
+          return true;
+
+        if (!CTSD->hasExternalFormalLinkage()) {
+          llvm::dbgs() << "NO external formal linkage\n";
+          return true;
+        }
+
+        // TODO is there a better way todo this
+        auto sourceText = Lexer::getSourceText(clang::CharSourceRange::getTokenRange(
+                                                          CTSD->getExternLoc(), D->getLocation()), 
+                                                          context_.getSourceManager(), context_.getLangOpts());
+        // Don't apply the macro if it already has one
+        if (sourceText.contains(exportMacro)) {
+          return true;
+        }
+
+        size_t keywordOffset = sourceText.find(D->isStruct() ? "struct" : "class");
+
+        if (keywordOffset == llvm::StringRef::npos) {
+          llvm::errs() << "Failed to find class or struct keyword for extern template declaration " << sourceText;
+          return true;
+        }
+        // Insert one space after the keyword
+        keywordOffset += D->isStruct() ? 7 : 6;
+        insertion_point = CTSD->getExternLoc().getLocWithOffset(keywordOffset);
+      } else if (CTSD->isExplicitSpecialization()) {
+        // Don't try to export what could just be a template meta programming class
+        if (!requiresExport)
+          return true;
+      }
     }
 
     if (D->isClass() || D->isStruct()) {
-      //D->dump();
-      clang::SourceLocation insertion_point1 = D->getLocation();
-      auto aroucerange = D->getSourceRange();
-      clang::SourceLocation insertion_point = D->getLocation();
-
       location = context_.getFullLoc(D->getLocation()).getExpansionLoc();
 
       if (D->needsImplicitCopyConstructor() || D->needsImplicitCopyAssignment() || D->needsImplicitMoveAssignment() || D->needsImplicitDestructor()) {
@@ -226,93 +291,20 @@ public:
       unexported_public_interface(location)
         << D
         << clang::FixItHint::CreateInsertion(insertion_point,
-          export_macro + " ");
+          exportMacro + " ");
       return true;
+    }
+  }
+
+  void LogSkippedDecl(clang::NamedDecl *D, clang::FullSourceLoc location, const std::string &reason) {
+    if (debuglog) {
+      llvm::dbgs() << "Skipping " << D->getName() << reason << "that was declared in " << location.getFileEntry()->getName()
+                   << " line " << location.getLineNumber() << "\n";
     }
   }
 
   bool VisitClassTemplateDecl(clang::ClassTemplateDecl *CTD) {
     //llvm::dbgs() << "ClassTemplateDecl: " << CTD->getNameAsString() << " is definition: " << CTD->isThisDeclarationADefinition() << " visible: " << CTD->isExternallyVisible() << "\n";
-    return true;
-  }
-
-  bool VisitClassTemplateSpecializationDecl(clang::ClassTemplateSpecializationDecl *CTSD) {
-    llvm::dbgs() << "TemplateDecl: " << CTSD->getNameAsString()  << ", Body: " << CTSD->hasBody() 
-                 << ", Definition: " << CTSD->hasDefinition() << ", Specialization Kind: " 
-                 << CTSD->getSpecializationKind() << "\n";
-    clang::FullSourceLoc location = get_location(CTSD);
-    llvm::StringRef filename = source_manager_.getFilename(location);
-
-    if (isLocationIgnored(location))
-      return true;
-
-    if (isAlreadyExported(CTSD))
-      return true;
-
-#if 0 
-    if (CTSD->isThisDeclarationADefinition())
-      return true;
-
-    llvm::dbgs() << "Not a declaration\n";
-#endif
-
-    // We only want export full class specialization
-    if (llvm::isa<ClassTemplatePartialSpecializationDecl>(CTSD))
-      return true;
-
-    if (CTSD->isExplicitSpecialization())
-      llvm::dbgs() << "Is explicit specialization\n";
-
-    if (CTSD->isClassScopeExplicitSpecialization())
-      return true;
-
-    clang::SourceLocation insertion_point;
-    std::string exportMacro;
-
-    location.dump();
-    if (CTSD->getTemplateSpecializationKind() == TSK_ExplicitInstantiationDeclaration) {
-      exportMacro = template_export_macro;
-      if (!CTSD->getExternLoc().isValid())
-        return true;
-
-      if (!CTSD->hasExternalFormalLinkage()) {
-        llvm::dbgs() << "NO external formal linkage\n";
-        return true;
-      }
-
-      int offset = 6;
-      if (CTSD->getSpecializedTemplate()->getTemplatedDecl()->isStruct())
-        offset = 7;
-      clang::SourceLocation insertion_point = CTSD->getExternLoc();
-      insertion_point = CTSD->getSpecializedTemplate()->getBeginLoc();
-      insertion_point = location.getLocWithOffset(offset);
-
-    } else {
-      exportMacro = export_macro;
-      // Don't try to export explicit specializations with no out of line methods
-      bool allInlineMethods = llvm::none_of(CTSD->methods(), [](const clang::CXXMethodDecl* MD) { 
-        return !MD->isImplicit() && !MD->hasBody(); 
-      });
-
-      // Check for any non inline static fields that inline methods could reference 
-      bool noStaticFields = llvm::none_of(CTSD->fields(), [](const clang::FieldDecl* FD) {
-        if (const VarDecl *VD = dyn_cast<VarDecl>(FD)) {
-          return VD->isStaticDataMember() && !VD->hasInit();
-        }
-        return false;
-      });
-
-      if (allInlineMethods && noStaticFields) {
-        return true;
-      }
-
-      insertion_point = CTSD->getLocation();
-    }
-
-    unexported_public_interface(location)
-      << CTSD
-      << clang::FixItHint::CreateInsertion(insertion_point,
-        exportMacro + " ");
     return true;
   }
 
@@ -333,33 +325,6 @@ public:
     if (FD->hasBody())
       return true;
 
-    if (llvm::isa<clang::FunctionTemplateDecl>(FD)) {
-      
-    }
-
-    // Ignore friend declarations.
-    if (llvm::isa<clang::FriendDecl>(FD) || FD->isCXXClassMember())
-      return true;
-
-    // Ignore deleted and defaulted functions (e.g. operators).
-    if (FD->isDeleted() || FD->isDefaulted())
-      return true;
-
-    if (const auto *MD = llvm::dyn_cast<clang::CXXMethodDecl>(FD)) {
-      // Ignore private members (except for a negative check).
-      if (MD->getAccess() == clang::AccessSpecifier::AS_private) {
-        // TODO(compnerd) this should also handle `__visibility__`
-        if (MD->hasAttr<clang::DLLExportAttr>())
-          // TODO(compnerd) this should emit a fix-it to remove the attribute
-          exported_private_interface(location) << MD;
-        return true;
-      }
-
-      // Pure virtual methods cannot be exported.
-      if (MD->isPureVirtual())
-        return true;
-    }
-
     if (FD->hasAttr<BuiltinAttr>()) {
       if (debuglog) {
         llvm::outs() << "Skipping builtin: " << FD->getName() << '\n';
@@ -367,6 +332,44 @@ public:
       return true;
     }
 
+    if (llvm::isa<clang::FunctionTemplateDecl>(FD)) {
+      
+    }
+
+    if (FD->isCXXClassMember()) {
+      // Ignore deleted and defaulted functions (e.g. operators).
+      if (FD->isDeleted() || FD->isDefaulted())
+        return true;
+
+      // Ignore friend declarations.
+      if (const auto *FR = llvm::dyn_cast<clang::FriendDecl>(FD)) {
+        const auto *target = FR->getFriendDecl();
+        if (target && isAlreadyExported(target)) {
+          return true;
+        }
+      } else {
+        // FIXME add support for user requested exporting of individual members of a class
+        return true;
+      }
+
+      if (const auto *MD = llvm::dyn_cast<clang::CXXMethodDecl>(FD)) {
+        // Ignore private members (except for a negative check).
+        if (MD->getAccess() == clang::AccessSpecifier::AS_private) {
+          // TODO(compnerd) this should also handle `__visibility__`
+          if (MD->hasAttr<clang::DLLExportAttr>())
+            // TODO(compnerd) this should emit a fix-it to remove the attribute
+            exported_private_interface(location) << MD;
+          return true;
+        }
+
+        // Pure virtual methods cannot be exported.
+        if (MD->isPureVirtual())
+          return true;
+      }
+    } else if (FD->isExternC()) {
+      // TODO selective adding different export macro to extern "C" declared functions
+      return true;
+    }
 
     // TODO(compnerd) replace with std::set::contains in C++20
     if (contains(get_ignored_functions(), FD->getNameAsString()))
@@ -387,7 +390,7 @@ public:
     this->sema = &sema;
   }
 
-  bool isAlreadyExported(clang::Decl *D) {
+  bool isAlreadyExported(const clang::Decl *D) {
     return D->hasAttr<clang::DLLExportAttr>() ||
            D->hasAttr<clang::DLLImportAttr>() ||
            D->hasAttr<clang::VisibilityAttr>();
@@ -469,7 +472,6 @@ public:
       RewritesReceiver Rec(rewriter_->Rewrite);
       rewriter_->Editor.applyRewrites(Rec);
 
-      // rewriter_->WriteFixedFiles();
       for (auto I = rewriter_->buffer_begin(), 
                 E = rewriter_->buffer_end(); I != E; I++) {
         OptionalFileEntryRef Entry = SM.getFileEntryRefForID(I->first);
