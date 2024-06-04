@@ -83,6 +83,11 @@ ignored_headers("header-ignore",
   llvm::cl::CommaSeparated,
   llvm::cl::cat(idt::category));
 
+llvm::cl::opt<bool>
+export_extern_c("export-extern-c", llvm::cl::init(false),
+  llvm::cl::desc("Add export macros to extern C declarations"),
+  llvm::cl::cat(idt::category));
+
 template <typename Key, typename Compare, typename Allocator>
 bool contains(const std::set<Key, Compare, Allocator>& set, const Key& key) {
   return set.find(key) != set.end();
@@ -364,8 +369,10 @@ public:
           return true;
       }
     } else if (FD->isExternC()) {
-      // TODO selective adding different export macro to extern "C" declared functions
-      return true;
+      // Don't export extern "C" declared functions by default
+      if (!export_extern_c) {
+        return true;
+      }
     }
 
     // TODO(compnerd) replace with std::set::contains in C++20
