@@ -88,6 +88,12 @@ export_extern_c("export-extern-c", llvm::cl::init(false),
   llvm::cl::desc("Add export macros to extern C declarations"),
   llvm::cl::cat(idt::category));
 
+llvm::cl::opt<bool>
+skip_simple_structs("skip-simple-structs", llvm::cl::init(true),
+  llvm::cl::desc("Skip exporting simple structs that "
+    "don't have any out of line methods or"),
+  llvm::cl::cat(idt::category));
+
 template <typename Key, typename Compare, typename Allocator>
 bool contains(const std::set<Key, Compare, Allocator>& set, const Key& key) {
   return set.find(key) != set.end();
@@ -204,7 +210,7 @@ public:
     bool requiresExport = outOfLineMembers || staticFields;
 
     // Don't add DLL export to PoD structs that also have no methods
-    if (D->isStruct() && !requiresExport) {
+    if (D->isStruct() && skip_simple_structs && !requiresExport) {
       LogSkippedDecl(D, location, " that is SimpleStruct");
       return true;
     }
