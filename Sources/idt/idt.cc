@@ -281,6 +281,14 @@ public:
         if (!requiresExport)
           return true;
       }
+    } else {
+      auto *nestedName = D->getQualifier();
+      // Check if the class name is prefixed with a type or namespace 
+      if (nestedName) {
+        // Use namespace prefix starting location to insert at instead of the 
+        // normal class name location that skips the name prefixes
+        insertion_point = D->getQualifierLoc().getBeginLoc();
+      }
     }
 
     if (D->isClass() || D->isStruct()) {
