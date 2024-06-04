@@ -160,13 +160,6 @@ public:
 
   bool debuglog = false;
 
-  bool TraverseNamespaceDecl(NamespaceDecl *ND) {
-    if (ND->isAnonymousNamespace()) {
-      return false;
-    }
-    return RecursiveASTVisitor::TraverseNamespaceDecl(ND);
-  }
-
   bool VisitCXXRecordDecl(clang::CXXRecordDecl *D) {
     if (D->isEnum())
       return true;
@@ -174,6 +167,10 @@ public:
     clang::FullSourceLoc location = get_location(D);
 
     if (isLocationIgnored(location))
+      return true;
+
+    // Doon't export declarations contained in anonymous namespaces
+    if (D->isInAnonymousNamespace())
       return true;
 
     if (D->isImplicit() || !D->isThisDeclarationADefinition() || D->isTemplateDecl()) {
