@@ -3,6 +3,7 @@
 
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/Diagnostic.h"
+#include "clang/Basic/DiagnosticSema.h"
 #include "clang/Edit/EditsReceiver.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
@@ -532,6 +533,11 @@ struct action : clang::ASTFrontendAction {
   CreateASTConsumer(clang::CompilerInstance &CI, llvm::StringRef InFile) override {
     llvm::outs() << "Processing: " << InFile << '\n';
     CI.getPreprocessor().SetSuppressIncludeNotFoundError(true);
+
+    CI.getFrontendOpts().SkipFunctionBodies = true;
+    DiagnosticsEngine &Diag = getCompilerInstance().getDiagnostics();
+    Diag.setSeverity(clang::diag::warn_unused_private_field, diag::Severity::Ignored, SourceLocation());
+
     return std::make_unique<idt::consumer>(CI.getASTContext(), filechanges);
   }
 };
