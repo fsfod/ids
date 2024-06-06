@@ -187,16 +187,8 @@ public:
 
     clang::FullSourceLoc location = get_location(D);
 
-    if (isLocationIgnored(location))
+    if (ShouldSkipDeclaration(D))
       return true;
-
-    // Doon't export declarations contained in anonymous namespaces
-    if (D->isInAnonymousNamespace())
-      return true;
-
-    if (D->isImplicit() || !D->isThisDeclarationADefinition() || D->isTemplateDecl()) {
-      return true;
-    }
 
     if (isAlreadyExported(D, true))
       return true;
@@ -329,6 +321,29 @@ public:
     }
   }
 
+  bool ShouldSkipDeclaration(clang::Decl *D) {
+    clang::FullSourceLoc location = get_location(D);
+
+    if (isLocationIgnored(location))
+      return true;
+
+    if (location.isMacroID())
+      return true;
+
+    // Doon't export declarations contained in anonymous namespaces
+    if (D->isInAnonymousNamespace())
+      return true;
+
+    if (D->isImplicit())
+      return true;
+    
+    if (D->isTemplateDecl())
+      return true;
+
+
+    return false;
+  }
+
   void LogSkippedDecl(clang::NamedDecl *D, clang::FullSourceLoc location, const std::string &reason) {
     if (debuglog) {
       llvm::dbgs() << "Skipping " << D->getName() << reason << "that was declared in " << location.getFileEntry()->getName()
@@ -344,7 +359,7 @@ public:
   bool VisitFunctionDecl(clang::FunctionDecl *FD) {
     clang::FullSourceLoc location = get_location(FD);
 
-    if (isLocationIgnored(location))
+    if (ShouldSkipDeclaration(FD))
       return true;
 
     if (isAlreadyExported(FD, FD->isCXXClassMember()))
