@@ -292,6 +292,13 @@ public:
       }
     }
 
+    if (insertion_point.isMacroID()) {
+      if (debuglog) {
+        llvm::outs() << "Skip exporting '" << D->getDeclName() << "' the macro insertion point was inside a macro.\n";
+      }
+      return true;
+    }
+
     if (D->isClass() || D->isStruct()) {
       location = context_.getFullLoc(D->getLocation()).getExpansionLoc();
 
