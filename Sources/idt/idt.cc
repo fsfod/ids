@@ -176,6 +176,15 @@ public:
     if (D->isEnum())
       return true;
 
+    // We won't visit some forward declared classes again that get a definition in same translation unit
+    if (!D->isThisDeclarationADefinition()) {
+      auto realDefinition = D->getDefinition();
+      if (!realDefinition)
+        return true;
+
+      D = realDefinition;
+    }
+
     clang::FullSourceLoc location = get_location(D);
 
     if (isLocationIgnored(location))
