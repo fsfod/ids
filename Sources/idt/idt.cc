@@ -189,7 +189,7 @@ public:
       return true;
     }
 
-    if (isAlreadyExported(D))
+    if (isAlreadyExported(D, true))
       return true;
 
     auto parent = D->getDeclContext();
@@ -338,7 +338,7 @@ public:
     if (isLocationIgnored(location))
       return true;
 
-    if (isAlreadyExported(FD))
+    if (isAlreadyExported(FD, FD->isCXXClassMember()))
       return true;
 
     // We are only interested in non-dependent types.
@@ -368,7 +368,7 @@ public:
       // Ignore friend declarations.
       if (const auto *FR = llvm::dyn_cast<clang::FriendDecl>(FD)) {
         const auto *target = FR->getFriendDecl();
-        if (target && isAlreadyExported(target)) {
+        if (target && isAlreadyExported(target, true)) {
           return true;
         }
       } else {
@@ -416,10 +416,32 @@ public:
     this->sema = &sema;
   }
 
-  bool isAlreadyExported(const clang::Decl *D) {
-    return D->hasAttr<clang::DLLExportAttr>() ||
-           D->hasAttr<clang::DLLImportAttr>() ||
-           D->hasAttr<clang::VisibilityAttr>();
+  bool isAlreadyExported(const clang::Decl *D, bool ignoreInherited) {
+    for (auto *Atrr : D->attrs()) {
+      if (clang::isa<DLLExportAttr>(Atrr) || clang::isa<DLLExportAttr>(Atrr) || 
+          clang::isa<VisibilityAttr>(Atrr)) {
+        if (Atrr->isInherited()) {
+          if (debuglog) {
+            llvm::StringRef name = D->getDeclKindName();
+            if (auto *namedDecl = clang::dyn_cast<clang::NamedDecl>(D))
+              name = namedDecl->getName();
+            llvm::outs() << "Ignored inherited export attribute on: " << name << '\n';
+          }
+          continue;
+        }
+
+        auto range = D->getSourceRange();
+        clang::FullSourceLoc location = context_.getFullLoc(Atrr->getLocation()).getExpansionLoc();
+        // The source range we get for functions and variables starts after there attributes
+        if (!clang::isa<clang::CXXRecordDecl>(D) || range.fullyContains(location)) {
+          return true;
+        } else {
+          continue;
+        }
+      }
+
+    }
+    return false;
   }
 
   bool isLocationIgnored(clang::FullSourceLoc loc) {
