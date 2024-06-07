@@ -202,7 +202,7 @@ public:
     const auto *CTSD = dyn_cast<clang::ClassTemplateSpecializationDecl>(D);
 
     for (const clang::CXXMethodDecl* MD : D->methods()) {
-      if (MD->isImplicit() || MD->isDeleted() || MD->isDefaulted())
+      if (MD->isImplicit() || MD->isDeleted() || MD->isDefaulted() || MD->isPureVirtual())
         continue;
 
       if (!MD->hasBody()) {
