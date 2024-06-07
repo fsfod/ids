@@ -136,6 +136,7 @@ class visitor : public clang::RecursiveASTVisitor<visitor> {
   clang::ASTContext &context_;
   clang::SourceManager &source_manager_;
   clang::Sema *sema;
+  bool skip_function_bodies;
 
   clang::DiagnosticBuilder
   unexported_public_interface(clang::SourceLocation location) {
@@ -165,9 +166,9 @@ class visitor : public clang::RecursiveASTVisitor<visitor> {
   }
 
 public:
-  explicit visitor(clang::ASTContext &context)
-      : context_(context), source_manager_(context.getSourceManager()), sema(nullptr) {
-
+  explicit visitor(clang::ASTContext &context, bool skipFuncBodies)
+      : context_(context), source_manager_(context.getSourceManager()), sema(nullptr), 
+        skip_function_bodies(skipFuncBodies) {
   }
 
   bool debuglog = false;
@@ -197,10 +198,21 @@ public:
     // Skip non templated class/structs in a templated type
     if (D->isDependentContext())
       return true;
+    bool outOfLineMembers = false;
+    const auto *CTSD = dyn_cast<clang::ClassTemplateSpecializationDecl>(D);
 
-    bool outOfLineMembers = llvm::any_of(D->methods(), [](const clang::CXXMethodDecl* MD) {
-      return !MD->isImplicit() && !MD->hasBody() && !MD->isDeleted() && !MD->isDefaulted(); 
-    });
+    for (const clang::CXXMethodDecl* MD : D->methods()) {
+      if (MD->isImplicit() || MD->isDeleted() || MD->isDefaulted())
+        continue;
+
+      if (!MD->hasBody()) {
+        if ((CTSD || skip_function_bodies) && MD->isInlined()) {
+          continue;
+        }
+        outOfLineMembers = true;
+        break;
+      }
+    }
 
     bool staticFields = llvm::any_of(D->fields(), [](const clang::FieldDecl* FD) {
       if (const VarDecl *VD = dyn_cast<VarDecl>(FD)) {
@@ -235,7 +247,7 @@ public:
     clang::SourceLocation insertion_point = D->getLocation();
     std::string exportMacro = export_macro;
 
-    if (const auto *CTSD = dyn_cast<clang::ClassTemplateSpecializationDecl>(D)) {
+    if (CTSD) {
       if (debuglog) {
         llvm::outs() << "TemplateDecl: " << CTSD->getNameAsString() << ", Body: " << CTSD->hasBody()
           << ", Definition: " << CTSD->hasDefinition() << ", Specialization Kind: "
@@ -563,8 +575,8 @@ class consumer : public clang::SemaConsumer {
   std::unique_ptr<clang::FixItRewriter> rewriter_;
 
 public:
-  explicit consumer(clang::ASTContext &context, llvm::StringMap<std::string> &allFileChanges)
-      : visitor_(context), filechanges(allFileChanges) {}
+  explicit consumer(clang::ASTContext &context, bool skipFunctionBodies, llvm::StringMap<std::string> &allFileChanges)
+      : visitor_(context, skipFunctionBodies), filechanges(allFileChanges) {}
 
 
   llvm::StringMap<std::string>& filechanges;
@@ -631,11 +643,12 @@ struct action : clang::ASTFrontendAction {
     llvm::outs() << "Processing: " << InFile << '\n';
     CI.getPreprocessor().SetSuppressIncludeNotFoundError(true);
 
-    CI.getFrontendOpts().SkipFunctionBodies = true;
+    bool skipFunctionBodies = true;
+    CI.getFrontendOpts().SkipFunctionBodies = skipFunctionBodies;
     DiagnosticsEngine &Diag = getCompilerInstance().getDiagnostics();
     Diag.setSeverity(clang::diag::warn_unused_private_field, diag::Severity::Ignored, SourceLocation());
 
-    return std::make_unique<idt::consumer>(CI.getASTContext(), filechanges);
+    return std::make_unique<idt::consumer>(CI.getASTContext(), skipFunctionBodies, filechanges);
   }
 };
 
