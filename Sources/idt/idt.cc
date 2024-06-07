@@ -319,6 +319,8 @@ public:
           exportMacro + " ");
       return true;
     }
+
+    return true;
   }
 
   bool ShouldSkipDeclaration(clang::Decl *D) {
