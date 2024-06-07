@@ -465,10 +465,14 @@ public:
     if (contains(get_ignored_functions(), FD->getNameAsString()))
       return true;
 
-    clang::SourceLocation insertion_point =
-        FD->getTemplatedKind() == clang::FunctionDecl::TK_NonTemplate
-            ? FD->getBeginLoc()
-            : FD->getInnerLocStart();
+    clang::SourceLocation insertion_point;
+    if (FD->getTemplatedKind() == clang::FunctionDecl::TK_NonTemplate) {
+      // Try to insert after the return type
+      insertion_point = FD->getReturnTypeSourceRange().getEnd();
+    } else {
+      insertion_point = FD->getInnerLocStart();
+    }
+
     unexported_public_interface(location)
         << FD
         << clang::FixItHint::CreateInsertion(insertion_point,
