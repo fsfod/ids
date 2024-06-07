@@ -346,6 +346,44 @@ public:
     return false;
   }
 
+  bool VisitVarDecl(clang::VarDecl *VD) {
+
+    if (VD->isCXXClassMember())
+      return true;
+
+    clang::FullSourceLoc location = get_location(VD);
+
+    const auto filename = location.getFileEntryRef()->getName();
+    int line = location.getLineNumber();
+
+    if (isLocationIgnored(location))
+      return true;
+
+    if (isAlreadyExported(VD, true))
+      return true;
+    auto context = VD->getDeclContext();
+
+    if (clang::isa_and_nonnull<clang::RecordDecl>(VD))
+      return true;
+
+    // Doon't export declarations contained in anonymous namespaces
+    if (VD->isInAnonymousNamespace())
+      return true;
+    
+    if (!VD->hasExternalStorage()) {
+      // Only annotate global variable definitions in source files not headers
+      if (llvm::sys::path::extension(filename) != ".cpp") {
+        return true;
+      }
+    }
+    clang::SourceLocation insertion_point = VD->getBeginLoc();
+    unexported_public_interface(location)
+      << VD
+      << clang::FixItHint::CreateInsertion(insertion_point,
+        "LLVM_ABI ");
+    return true;
+  }
+
   void LogSkippedDecl(clang::NamedDecl *D, clang::FullSourceLoc location, const std::string &reason) {
     if (debuglog) {
       llvm::dbgs() << "Skipping " << D->getName() << reason << "that was declared in " << location.getFileEntry()->getName()
