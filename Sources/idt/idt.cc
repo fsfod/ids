@@ -479,8 +479,15 @@ public:
 
     clang::SourceLocation insertion_point;
     if (FD->getTemplatedKind() == clang::FunctionDecl::TK_NonTemplate) {
-      // Try to insert after the return type
-      insertion_point = FD->getReturnTypeSourceRange().getEnd();
+       auto *nestedName = FD->getQualifier();
+      // Check if the function name is prefixed with a type or namespace 
+      if (nestedName) {
+        // Use namespace prefix starting location to insert at instead of the 
+        // normal class name location that skips the name prefixes
+        insertion_point = FD->getQualifierLoc().getBeginLoc();
+      } else {
+        insertion_point = FD->getNameInfo().getBeginLoc();
+      }
     } else {
       insertion_point = FD->getInnerLocStart();
     }
