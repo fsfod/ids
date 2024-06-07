@@ -95,6 +95,11 @@ skip_simple_structs("skip-simple-structs", llvm::cl::init(true),
     "don't have any out of line methods or"),
   llvm::cl::cat(idt::category));
 
+llvm::cl::opt<bool>
+func_macro_on_name("function-macro-on-name", llvm::cl::init(false),
+  llvm::cl::desc("Change the attach point for function export macros to next to there name"),
+  llvm::cl::cat(idt::category));
+
 template <typename Key, typename Compare, typename Allocator>
 bool contains(const std::set<Key, Compare, Allocator>& set, const Key& key) {
   return set.find(key) != set.end();
@@ -477,9 +482,11 @@ public:
     if (contains(get_ignored_functions(), FD->getNameAsString()))
       return true;
 
-    clang::SourceLocation insertion_point;
-    if (FD->getTemplatedKind() == clang::FunctionDecl::TK_NonTemplate) {
-       auto *nestedName = FD->getQualifier();
+    clang::SourceLocation insertion_point = insertion_point = FD->getBeginLoc();
+    if (FD->getTemplatedKind() != clang::FunctionDecl::TK_NonTemplate) {
+      insertion_point = FD->getInnerLocStart();
+    } else if(func_macro_on_name) {
+      auto *nestedName = FD->getQualifier();
       // Check if the function name is prefixed with a type or namespace 
       if (nestedName) {
         // Use namespace prefix starting location to insert at instead of the 
@@ -488,8 +495,6 @@ public:
       } else {
         insertion_point = FD->getNameInfo().getBeginLoc();
       }
-    } else {
-      insertion_point = FD->getInnerLocStart();
     }
 
     unexported_public_interface(location)
