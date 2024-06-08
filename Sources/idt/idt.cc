@@ -204,7 +204,12 @@ public:
     if (D->isDependentContext())
       return true;
     bool outOfLineMembers = false;
-    const auto *CTSD = dyn_cast<clang::ClassTemplateSpecializationDecl>(D);
+
+    auto *CTSD = clang::dyn_cast<clang::ClassTemplateSpecializationDecl>(D);
+    // Process extern template declarations separately when we visit them directly
+    if (CTSD && CTSD->getTemplateSpecializationKind() == TSK_ExplicitInstantiationDeclaration) {
+      return true;
+    }
 
     for (const clang::CXXMethodDecl* MD : D->methods()) {
       if (MD->isImplicit() || MD->isDeleted() || MD->isDefaulted() || MD->isPureVirtual())
@@ -267,35 +272,7 @@ public:
       if (CTSD->isClassScopeExplicitSpecialization())
         return true;
 
-      if (CTSD->getTemplateSpecializationKind() == TSK_ExplicitInstantiationDeclaration) {
-        exportMacro = template_export_macro;
-        if (!CTSD->getExternLoc().isValid())
-          return true;
-
-        if (!CTSD->hasExternalFormalLinkage()) {
-          llvm::dbgs() << "NO external formal linkage\n";
-          return true;
-        }
-
-        // TODO is there a better way todo this
-        auto sourceText = Lexer::getSourceText(clang::CharSourceRange::getTokenRange(
-                                                          CTSD->getExternLoc(), D->getLocation()), 
-                                                          context_.getSourceManager(), context_.getLangOpts());
-        // Don't apply the macro if it already has one
-        if (sourceText.contains(exportMacro)) {
-          return true;
-        }
-
-        size_t keywordOffset = sourceText.find(D->isStruct() ? "struct" : "class");
-
-        if (keywordOffset == llvm::StringRef::npos) {
-          llvm::errs() << "Failed to find class or struct keyword for extern template declaration " << sourceText;
-          return true;
-        }
-        // Insert one space after the keyword
-        keywordOffset += D->isStruct() ? 7 : 6;
-        insertion_point = CTSD->getExternLoc().getLocWithOffset(keywordOffset);
-      } else if (CTSD->isExplicitSpecialization()) {
+      if (CTSD->isExplicitSpecialization()) {
         // Don't try to export what could just be a template meta programming class
         if (!requiresExport)
           return true;
@@ -336,6 +313,56 @@ public:
           exportMacro + " ");
       return true;
     }
+
+    return true;
+  }
+
+  bool VisitClassTemplateSpecializationDecl(clang::ClassTemplateSpecializationDecl *D) {
+    clang::FullSourceLoc location = get_location(D);
+    const auto filename = location.getFileEntry()->getName();
+    int line = location.getLineNumber();
+
+    if (D->getTemplateSpecializationKind() != TSK_ExplicitInstantiationDeclaration)
+      return true;
+
+    if (ShouldSkipDeclaration(D))
+      return true;
+
+    if (!D->getExternLoc().isValid()) {
+      LogSkippedDecl(D, location, "extern location is not valid");
+      return true;
+    }
+
+    if (!D->hasExternalFormalLinkage()) {
+      llvm::dbgs() << "NO external formal linkage\n";
+      return true;
+    }
+
+    std::string exportMacro = template_export_macro;
+
+    // TODO is there a better way todo this
+    auto sourceText = Lexer::getSourceText(clang::CharSourceRange::getTokenRange(
+                                                       D->getExternLoc(), D->getLocation()),
+                                          context_.getSourceManager(), context_.getLangOpts());
+    // Don't apply the macro if it already has one
+    if (sourceText.contains(exportMacro)) {
+      return true;
+    }
+
+    size_t keywordOffset = sourceText.find(D->isStruct() ? "struct" : "class");
+
+    if (keywordOffset == llvm::StringRef::npos) {
+      llvm::errs() << "Failed to find class or struct keyword for extern template declaration " << sourceText;
+      return true;
+    }
+    // Insert one space after the keyword
+    keywordOffset += D->isStruct() ? 7 : 6;
+    auto insertion_point = D->getExternLoc().getLocWithOffset(keywordOffset);
+
+    unexported_public_interface(location)
+      << D
+      << clang::FixItHint::CreateInsertion(insertion_point,
+        exportMacro + " ");
 
     return true;
   }
