@@ -216,7 +216,8 @@ public:
         continue;
 
       if (!MD->hasBody()) {
-        if ((CTSD || skip_function_bodies) && MD->isInlined()) {
+        const clang::FunctionDecl* def = MD->getDefinition();
+        if (MD->isInlined() || (def && def->isInlined())) {
           continue;
         }
         outOfLineMembers = true;
