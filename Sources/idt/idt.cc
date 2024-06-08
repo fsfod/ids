@@ -963,7 +963,4 @@ int main(int argc, char *argv[]) {
   }
 
   return result;
-
- // Clang->getPreprocessorOpts().addRemappedFile("<<< inputs >>>", MB);
-  //auto MB = llvm::MemoryBuffer::getMemBuffer(buffer);
 }
