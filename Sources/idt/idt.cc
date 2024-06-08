@@ -90,9 +90,9 @@ export_extern_c("export-extern-c", llvm::cl::init(false),
   llvm::cl::cat(idt::category));
 
 llvm::cl::opt<bool>
-skip_simple_structs("skip-simple-structs", llvm::cl::init(true),
-  llvm::cl::desc("Skip exporting simple structs that "
-    "don't have any out of line methods or"),
+skip_simple_classes("skip-simple-classes", llvm::cl::init(true),
+  llvm::cl::desc("Skip exporting simple classes and structs that "
+    "don't have any out of line methods or static fields"),
   llvm::cl::cat(idt::category));
 
 llvm::cl::opt<bool>
@@ -235,8 +235,8 @@ public:
     bool requiresExport = outOfLineMembers || staticFields;
 
     // Don't add DLL export to PoD structs that also have no methods
-    if (D->isStruct() && skip_simple_structs && !requiresExport) {
-      LogSkippedDecl(D, location, " that is SimpleStruct");
+    if (skip_simple_classes && !requiresExport) {
+      LogSkippedDecl(D, location, " that only has inline members");
       return true;
     }
 
