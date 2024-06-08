@@ -444,6 +444,9 @@ public:
   bool VisitFunctionDecl(clang::FunctionDecl *FD) {
     clang::FullSourceLoc location = get_location(FD);
 
+    if (FD->isCXXClassMember())
+      return true;
+
     if (ShouldSkipDeclaration(FD))
       return true;
 
@@ -469,37 +472,7 @@ public:
       
     }
 
-    if (FD->isCXXClassMember()) {
-      // Ignore deleted and defaulted functions (e.g. operators).
-      if (FD->isDeleted() || FD->isDefaulted())
-        return true;
-
-      // Ignore friend declarations.
-      if (const auto *FR = llvm::dyn_cast<clang::FriendDecl>(FD)) {
-        const auto *target = FR->getFriendDecl();
-        if (target && isAlreadyExported(target, true)) {
-          return true;
-        }
-      } else {
-        // FIXME add support for user requested exporting of individual members of a class
-        return true;
-      }
-
-      if (const auto *MD = llvm::dyn_cast<clang::CXXMethodDecl>(FD)) {
-        // Ignore private members (except for a negative check).
-        if (MD->getAccess() == clang::AccessSpecifier::AS_private) {
-          // TODO(compnerd) this should also handle `__visibility__`
-          if (MD->hasAttr<clang::DLLExportAttr>())
-            // TODO(compnerd) this should emit a fix-it to remove the attribute
-            exported_private_interface(location) << MD;
-          return true;
-        }
-
-        // Pure virtual methods cannot be exported.
-        if (MD->isPureVirtual())
-          return true;
-      }
-    } else if (FD->isExternC()) {
+    if (FD->isExternC()) {
       // Don't export extern "C" declared functions by default
       if (!export_extern_c) {
         return true;
