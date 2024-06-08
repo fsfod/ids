@@ -450,7 +450,7 @@ public:
     if (ShouldSkipDeclaration(FD))
       return true;
 
-    if (isAlreadyExported(FD, FD->isCXXClassMember()))
+    if (isAlreadyExported(FD, true))
       return true;
 
     // We are only interested in non-dependent types.
@@ -511,7 +511,7 @@ public:
 
   bool isAlreadyExported(const clang::Decl *D, bool ignoreInherited) {
     for (auto *Atrr : D->attrs()) {
-      if (clang::isa<DLLExportAttr>(Atrr) || clang::isa<DLLExportAttr>(Atrr) || 
+      if (clang::isa<DLLExportAttr>(Atrr) || clang::isa<DLLImportAttr>(Atrr) ||
           clang::isa<VisibilityAttr>(Atrr)) {
         if (Atrr->isInherited()) {
           if (debuglog) {
