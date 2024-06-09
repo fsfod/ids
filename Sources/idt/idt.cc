@@ -441,6 +441,55 @@ public:
     return true;
   }
 
+  bool TraverseFriendDecl(clang::FriendDecl *D) {
+    // Our function visitor is not able to tell if a function declaration is a friend
+    if (!D->getFriendType() && clang::isa<clang::FunctionDecl>(D->getFriendDecl())) {
+      VisitFriendDecl(D);
+      return true;
+    } else {
+      RecursiveASTVisitor::TraverseFriendDecl(D);
+    }
+    return true;
+  }
+
+  bool VisitFriendDecl(clang::FriendDecl *D) {
+    clang::FullSourceLoc location = get_location(D);
+
+    if (isLocationIgnored(location))
+      return true;
+
+    const auto *FD =
+        clang::cast_if_present<clang::FunctionDecl>(D->getFriendDecl());
+
+    if (!FD)
+      return true;
+
+    if (isAlreadyExported(FD, true))
+      return true;
+
+    // If the function has a body, it can be materialized by the user.
+    if (FD->isInlined())
+      return true;
+
+    if (FD->isInAnonymousNamespace())
+      return true;
+
+    // We are only interested in non-dependent types.
+    if (FD->isThisDeclarationADefinition())
+       return true;
+
+    clang::SourceLocation insertion_point = D->getFriendLoc().getLocWithOffset(7);
+    unexported_public_interface(location)
+      << FD
+      << clang::FixItHint::CreateInsertion(insertion_point,
+        export_macro + " ");
+
+    // For some reason the hasBody check doesn't work for inline functions
+    //if (FD->isInlineSpecified())
+      //return true;
+    return true;
+  }
+
   bool VisitFunctionDecl(clang::FunctionDecl *FD) {
     clang::FullSourceLoc location = get_location(FD);
 
