@@ -440,13 +440,9 @@ public:
     }
   }
 
-  bool VisitClassTemplateDecl(clang::ClassTemplateDecl *CTD) {
-    //llvm::dbgs() << "ClassTemplateDecl: " << CTD->getNameAsString() << " is definition: " << CTD->isThisDeclarationADefinition() << " visible: " << CTD->isExternallyVisible() << "\n";
-    return true;
-  }
-
+  // Override TraverseFriendDecl so we can skip visiting the FunctionDecl stored by friend declarations,
+  // Since our function visitor is not able to tell if a function declaration is a friend.
   bool TraverseFriendDecl(clang::FriendDecl *D) {
-    // Our function visitor is not able to tell if a function declaration is a friend
     if (!D->getFriendType() && clang::isa<clang::FunctionDecl>(D->getFriendDecl())) {
       VisitFriendDecl(D);
       return true;
@@ -471,26 +467,34 @@ public:
     if (isAlreadyExported(FD, true))
       return true;
 
+    auto *def = FD->getDefinition();
+
+    if (def) {
+      if (def->hasBody())
+        return true;
+      if (def->isInlined())
+        return true;
+    }
+
+    auto tkind = FD->getTemplatedKind();
+    // TODO: Is there any non dependent function templates that would be valid to 
+    // add dllexport to that we would that see here.
+    if (tkind != FunctionDecl::TK_NonTemplate) {
+      return true;
+    }
+
     // If the function has a body, it can be materialized by the user.
     if (FD->isInlined())
       return true;
 
     if (FD->isInAnonymousNamespace())
       return true;
-
-    // We are only interested in non-dependent types.
-    if (FD->isThisDeclarationADefinition())
-       return true;
-
+    
     clang::SourceLocation insertion_point = D->getFriendLoc().getLocWithOffset(7);
     unexported_public_interface(location)
       << FD
       << clang::FixItHint::CreateInsertion(insertion_point,
         export_macro + " ");
-
-    // For some reason the hasBody check doesn't work for inline functions
-    //if (FD->isInlineSpecified())
-      //return true;
     return true;
   }
 
