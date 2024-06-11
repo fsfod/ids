@@ -49,6 +49,12 @@ template_export_macro("template-macro",
   llvm::cl::value_desc("define"), llvm::cl::Optional,
   llvm::cl::cat(idt::category));
 
+llvm::cl::opt<std::string>
+externc_export_macro("externc_export_macro",
+  llvm::cl::desc("The macro to decorate functions declared in extern \"C\" context "),
+  llvm::cl::value_desc("define"), llvm::cl::Optional,
+  llvm::cl::cat(idt::category));
+
 llvm::cl::opt<bool>
 apply_fixits("apply-fixits", llvm::cl::init(false),
              llvm::cl::desc("Apply suggested changes to decorate interfaces"),
@@ -521,11 +527,13 @@ public:
       
     }
 
+    std::string &exportMacro = function_export_macro;
     if (FD->isExternC()) {
       // Don't export extern "C" declared functions by default
       if (!export_extern_c) {
         return true;
       }
+      exportMacro = externc_export_macro;
     }
 
     // TODO(compnerd) replace with std::set::contains in C++20
@@ -550,7 +558,7 @@ public:
     unexported_public_interface(location)
         << FD
         << clang::FixItHint::CreateInsertion(insertion_point,
-                                             function_export_macro + " ");
+                                             exportMacro + " ");
     return true;
   }
 
@@ -940,6 +948,10 @@ int main(int argc, char *argv[]) {
 
   if (function_export_macro == "") {
     function_export_macro = export_macro.getValue();
+  }
+
+  if (externc_export_macro == "") {
+    externc_export_macro = function_export_macro.getValue();
   }
 
   auto InferedDB = inferMissingCompileCommands(std::make_unique<MemCDB>(options->getCompilations()));
