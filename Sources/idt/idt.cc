@@ -202,9 +202,6 @@ public:
     if (ShouldSkipDeclaration(D))
       return true;
 
-    if (isAlreadyExported(D, true))
-      return true;
-
     auto parent = D->getDeclContext();
     // Skip non templated class/structs in a templated type
     if (D->isDependentContext())
@@ -216,6 +213,9 @@ public:
     if (CTSD && CTSD->getTemplateSpecializationKind() == TSK_ExplicitInstantiationDeclaration) {
       return true;
     }
+
+    if (isAlreadyExported(D, true))
+      return true;
 
     for (const clang::CXXMethodDecl* MD : D->methods()) {
       if (MD->isImplicit() || MD->isDeleted() || MD->isDefaulted() || MD->isPureVirtual())
