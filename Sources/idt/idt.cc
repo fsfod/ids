@@ -348,9 +348,7 @@ public:
     std::string exportMacro = template_export_macro;
 
     // TODO is there a better way todo this
-    auto sourceText = Lexer::getSourceText(clang::CharSourceRange::getTokenRange(
-                                                       D->getExternLoc(), D->getLocation()),
-                                          context_.getSourceManager(), context_.getLangOpts());
+    auto sourceText = GetSourceTextForRange(clang::SourceRange(D->getExternLoc(), D->getLocation()));
     // Don't apply the macro if it already has one
     if (sourceText.contains(exportMacro)) {
       return true;
@@ -496,6 +494,86 @@ public:
     return true;
   }
 
+
+  bool LexExternTemplate(clang::Lexer &lexer, clang::SourceLocation &insertPoint) {
+    clang::Token tok;
+
+    bool found = false;
+    while (!lexer.LexFromRawLexer(tok) || tok.is(clang::tok::eof)) {
+      if (tok.is(clang::tok::raw_identifier) && tok.getRawIdentifier() == "extern") {
+        found = true;
+        break;
+      }
+    }
+
+    if (!found)
+      return false;
+
+    if (lexer.LexFromRawLexer(tok) || tok.isNot(clang::tok::raw_identifier) || tok.getRawIdentifier() != "template")
+      return false;
+
+    insertPoint = tok.getEndLoc().getLocWithOffset(1);
+    return true;
+  }
+
+  bool VisitFunctionTemplateDecl(clang::FunctionTemplateDecl *D) {
+    if (D->isCXXClassMember())
+      return true;
+
+    clang::FullSourceLoc location = get_location(D);
+
+    if (source_manager_.isInSystemHeader(location))
+      return true;
+
+    if (debuglog) {
+      const auto filename = location.getFileEntry()->getName();
+      int line = location.getLineNumber();
+      llvm::outs() << "FuncTempl: " << D->getName() << " at " << filename << ":" << line << '\n';
+    }
+
+    for (auto *FD : D->specializations()) {
+      for (auto *RD : FD->redecls()) {
+        auto specKind = RD->getTemplateSpecializationKind();
+        if (specKind == TSK_ExplicitInstantiationDeclaration) {
+          VisitExternFunctionTemplate(RD);
+        } else if (specKind == TSK_ExplicitInstantiationDefinition && isInsideMainFile(RD->getPointOfInstantiation())){
+          continue;
+        }
+      }
+    }
+
+    return true;
+  }
+
+  void VisitExternFunctionTemplate(clang::FunctionDecl *D) {
+    auto instLocation = GetFileLocation(D->getPointOfInstantiation());
+    int nameOffset = 0;
+    clang::SourceRange lineRange = GetLineSourceRangeLoc(D->getPointOfInstantiation(), nameOffset);
+    llvm::StringRef lineText = GetSourceTextForRange(lineRange);
+    llvm::StringRef declartionStart = lineText.substr(0, nameOffset - 1);
+
+    if (debuglog) {
+      llvm::outs() << "  Inst: " << instLocation.path << ":" << instLocation.line << '\n';
+      llvm::outs() << "    \"" << lineText << '\"\n';
+    }
+
+    if (declartionStart.contains(template_export_macro))
+      return;
+
+    clang::Lexer lexer(lineRange.getBegin(), context_.getLangOpts(), lineText.begin(), lineText.begin(), lineText.end());
+
+    clang::SourceLocation insert_point;
+    if (!LexExternTemplate(lexer, insert_point)) {
+      llvm::outs() << "Failed to find start of guessed extern function template declaration for" << D->getName() << "in "
+        << instLocation.path << ":" << instLocation.line << '\n';
+      return;
+    }
+
+    unexported_public_interface(D->getPointOfInstantiation())
+      << D
+      << clang::FixItHint::CreateInsertion(insert_point, template_export_macro + " ");
+  }
+
   bool VisitFunctionDecl(clang::FunctionDecl *FD) {
     clang::FullSourceLoc location = get_location(FD);
 
@@ -610,6 +688,41 @@ public:
     clang::FileID FID = source_manager_.getFileID(source_manager_.getExpansionLoc(Loc));
     return FID == source_manager_.getMainFileID() || FID == source_manager_.getPreambleFileID();
   }
+
+  llvm::StringRef GetLocationFilePath(clang::SourceLocation loc) {
+    return context_.getFullLoc(loc).getFileEntry()->getName();;
+  }
+
+  struct FileLoc {
+    llvm::StringRef path;
+    unsigned line;
+    unsigned column;
+
+    FileLoc(const llvm::StringRef &path, unsigned line, unsigned column)
+      : path(path), line(line), column(column) {
+    }
+  };
+
+  FileLoc GetFileLocation(clang::SourceLocation loc) {
+    clang::FullSourceLoc location = context_.getFullLoc(loc).getExpansionLoc();
+    return FileLoc(location.getFileEntry()->getName(), location.getLineNumber(), location.getColumnNumber());
+  }
+
+  SourceRange GetLineSourceRangeLoc(clang::SourceLocation loc, int &offsetInLine) {
+    clang::FullSourceLoc fullLoc = context_.getFullLoc(loc);
+    auto &SM = context_.getSourceManager();
+    int lineStart = fullLoc.getLineNumber();
+    auto start = SM.translateLineCol(fullLoc.getFileID(), lineStart-1, 0).getLocWithOffset(1);
+    auto end = SM.translateLineCol(fullLoc.getFileID(), lineStart, 0);
+    offsetInLine = fullLoc.getColumnNumber();
+    return SourceRange(start, end);
+  }
+
+  llvm::StringRef GetSourceTextForRange(clang::SourceRange range) {
+    return Lexer::getSourceText(clang::CharSourceRange::getTokenRange(range),
+                                context_.getSourceManager(), context_.getLangOpts());
+  }
+
 };
 
 class RewritesReceiver : public clang::edit::EditsReceiver {
