@@ -415,10 +415,13 @@ public:
     if (clang::isa_and_nonnull<clang::RecordDecl>(VD))
       return true;
 
+    if (VD->isConstexpr())
+      return true;
+
     // Doon't export declarations contained in anonymous namespaces
     if (VD->isInAnonymousNamespace())
       return true;
-    
+
     if (!VD->hasExternalStorage()) {
       // Only annotate global variable definitions in source files not headers
       if (llvm::sys::path::extension(filename) != ".cpp") {
