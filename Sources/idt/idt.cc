@@ -383,13 +383,13 @@ public:
     if (location.isMacroID())
       return true;
 
-    // Doon't export declarations contained in anonymous namespaces
+    // Declarations in anonymous namespaces have no external linkage
     if (D->isInAnonymousNamespace())
       return true;
 
     if (D->isImplicit())
       return true;
-    
+
     if (D->isTemplateDecl())
       return true;
 
