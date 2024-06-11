@@ -1122,8 +1122,16 @@ int main(int argc, char *argv[]) {
     }
     char c;
     llvm::outs() << "Commit changes Yes, No?\n";
-    if (!std::cin.get(c) || c != 'y') {
-      return 1;
+    while (true) {
+      if (!std::cin.get(c)) {
+        return 1;
+      }
+
+      if (c == 'y')
+        break;
+
+      if (c != 'n')
+        return 1;
     }
   }
 
@@ -1133,11 +1141,16 @@ int main(int argc, char *argv[]) {
     llvm::StringRef filename = pair.first();
     OS.reset(new llvm::raw_fd_ostream(filename, EC, llvm::sys::fs::OF_None));
     if (EC) {
-      llvm::errs() << "Unable to open" << filename << EC.message();
+      llvm::errs() << "Failed to write changes for '" << filename << "', Unable to open file error was " << EC.message();
+      result = 1;
       continue;
     }
     OS->write(pair.second.c_str(), pair.second.size());
     OS->flush();
+  }
+
+  if (!factory->allfilechanges.empty()) {
+    llvm::outs() << "all file changes written.\n";
   }
 
   return result;
