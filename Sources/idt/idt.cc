@@ -197,7 +197,7 @@ public:
       D = realDefinition;
     }
 
-    clang::FullSourceLoc location = get_location(D);
+    clang::FullSourceLoc location = context_.getFullLoc(D->getLocation()).getExpansionLoc();
 
     if (ShouldSkipDeclaration(D))
       return true;
@@ -302,7 +302,7 @@ public:
     }
 
     if (D->isClass() || D->isStruct()) {
-      location = context_.getFullLoc(D->getLocation()).getExpansionLoc();
+      D->hasNonTrivialCopyAssignment();
 
       if (D->needsImplicitCopyConstructor() || D->needsImplicitCopyAssignment() || D->needsImplicitMoveAssignment() || D->needsImplicitDestructor()) {
         sema->ForceDeclarationOfImplicitMembers(D);
@@ -313,14 +313,12 @@ public:
           }
         }
       }
-
-      unexported_public_interface(location)
-        << D
-        << clang::FixItHint::CreateInsertion(insertion_point,
-          exportMacro + " ");
-      return true;
     }
 
+    unexported_public_interface(location)
+      << D
+      << clang::FixItHint::CreateInsertion(insertion_point,
+        exportMacro + " ");
     return true;
   }
 
