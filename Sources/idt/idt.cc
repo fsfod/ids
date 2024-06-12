@@ -90,6 +90,13 @@ ignored_headers("header-ignore",
   llvm::cl::CommaSeparated,
   llvm::cl::cat(idt::category));
 
+llvm::cl::list<std::string>
+compdb_pathmatch("compdb-pathmatch",
+  llvm::cl::desc("File path glob patten of files to process from compilation database"),
+  llvm::cl::value_desc("patten[,patten...]"),
+  llvm::cl::CommaSeparated,
+  llvm::cl::cat(idt::category));
+
 llvm::cl::opt<bool>
 export_extern_c("export-extern-c", llvm::cl::init(false),
   llvm::cl::desc("Add export macros to extern C declarations"),
@@ -1119,41 +1126,51 @@ int main(int argc, char *argv[]) {
 
   auto InferedDB = inferMissingCompileCommands(std::make_unique<MemCDB>(options->getCompilations()));
 
-  std::unique_ptr<ClangTool> tool;
-  if (!header_directory.empty()) {
-    std::vector<std::string> rootheaders;
-    if (!GatherHeaders(options.get(), rootheaders)) {
+  if (mainfileonly.getNumOccurrences() == 0) {
+    mainfileonly = true;
+  }
+
+  std::vector<std::string> sourcePathList;
+  bool singleFile = true;
+  if (compdb_pathmatch.getNumOccurrences() != 0) {
+    singleFile = false;
+    llvm::SmallVector<llvm::GlobPattern> pathPatterns;
+    for (const auto& P : compdb_pathmatch) {
+      auto Patten = llvm::GlobPattern::create(P);
+      if (!Patten) {
+        llvm::errs() << "Bad compilation database path glob " << P << ", patten was\"" << Patten.takeError() << "\"\n";
+        return EXIT_FAILURE;
+      } else {
+        pathPatterns.push_back(std::move(Patten.get()));
+      }
+    }
+
+    for (const auto &file : InferedDB->getAllFiles()) {
+      for (auto &pat : pathPatterns) {
+        if (pat.match(file)) {
+          sourcePathList.push_back(file);
+          break;
+        }
+      }
+    }
+
+    if (sourcePathList.empty()) {
+      llvm::errs() << "No paths matched by compilation database path globs\n";
       return EXIT_FAILURE;
     }
 
-    std::string buffer;
-    buffer.reserve(1024);
-    llvm::raw_string_ostream stream(buffer);
-
-    for (auto &path : rootheaders) {
-      llvm::SmallString<256> slashpath;
-      llvm::sys::path::native(path, slashpath, llvm::sys::path::Style::windows_slash);
-
-      stream << "#include \"" << slashpath << "\"\n";
-      llvm::outs() << "RootHeader: " << slashpath << "\n";
+  } else if (!header_directory.empty()) {
+    singleFile = false;
+    if (!GatherHeaders(options.get(), sourcePathList)) {
+      return EXIT_FAILURE;
     }
-    stream.flush();
+  }
 
-    if (true) {
-
-
-      tool = std::make_unique<ClangTool>(ClangTool(*InferedDB.get(), { rootheaders }));
-
-      
-    } else {
-      ClangTool tool{ options->getCompilations(), { "DummyCombined.cpp"} };
-      tool.mapVirtualFile("DummyCombined.cpp", buffer);
-    }
-  } else {
+  std::unique_ptr<ClangTool> tool;
+  if (singleFile) {
     tool = std::make_unique<ClangTool>(ClangTool(*InferedDB.get(), { options->getSourcePathList() }));
-    if (mainfileonly.getNumOccurrences() == 0) {
-      mainfileonly = true;
-    }
+  } else {
+    tool = std::make_unique<ClangTool>(ClangTool(*InferedDB.get(), { sourcePathList }));
   }
 
   int result;
