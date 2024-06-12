@@ -187,9 +187,16 @@ public:
   explicit visitor(clang::ASTContext &context, bool skipFuncBodies)
       : context_(context), source_manager_(context.getSourceManager()), sema(nullptr), 
         skip_function_bodies(skipFuncBodies) {
+
+    auto path = source_manager_.getFileEntryRefForID(source_manager_.getMainFileID())->getName();
+    llvm::StringRef extension = llvm::sys::path::extension(path);
+    if (extension == ".cpp" || extension == ".cxx") {
+      isMainFileAHeader = false;
+    }
   }
 
   bool debuglog = false;
+  bool isMainFileAHeader = true;
 
   bool VisitCXXRecordDecl(clang::CXXRecordDecl *D) {
     if (D->isEnum())
@@ -380,7 +387,7 @@ public:
   bool ShouldSkipDeclaration(clang::Decl *D) {
     clang::FullSourceLoc location = get_location(D);
 
-    if (isLocationIgnored(location))
+    if (isLocationIgnored(location, D->getKind()))
       return true;
 
     if (location.isMacroID())
@@ -410,7 +417,7 @@ public:
     const auto filename = location.getFileEntryRef()->getName();
     int line = location.getLineNumber();
 
-    if (isLocationIgnored(location))
+    if (isLocationIgnored(location, clang::Decl::Kind::Var))
       return true;
 
     if (isAlreadyExported(VD, true))
@@ -427,12 +434,24 @@ public:
     if (VD->isInAnonymousNamespace())
       return true;
 
+    QualType type = VD->getType();
+
     if (!VD->hasExternalStorage()) {
+      if (!VD->hasGlobalStorage() || type.isConstQualified() || VD->getStorageClass() == SC_Static)
+        return true;
       // Only annotate global variable definitions in source files not headers
-      if (llvm::sys::path::extension(filename) != ".cpp") {
+      if (isMainFileAHeader) {
         return true;
       }
     }
+
+
+    auto name = type.getAsString();
+
+    if (!isMainFileAHeader && name.find("opt") == std::string::npos) {
+      return true;
+    }
+
     clang::SourceLocation insertion_point = VD->getBeginLoc();
     unexported_public_interface(location)
       << VD
@@ -461,9 +480,12 @@ public:
   }
 
   bool VisitFriendDecl(clang::FriendDecl *D) {
-    clang::FullSourceLoc location = get_location(D);
+    if (!isMainFileAHeader)
+      return true;
 
-    if (isLocationIgnored(location))
+    clang::FullSourceLoc location = get_location(D);
+    
+    if (isLocationIgnored(location, clang::Decl::Kind::Friend))
       return true;
 
     const auto *FD =
@@ -729,12 +751,22 @@ public:
     return false;
   }
 
-  bool isLocationIgnored(clang::FullSourceLoc loc) {
+  bool isLocationIgnored(clang::FullSourceLoc loc, clang::Decl::Kind nodeKind) {
     if (source_manager_.isInSystemHeader(loc))
       return true;
 
     if (mainfileonly && !isInsideMainFile(loc))
       return true;
+
+    if (!isMainFileAHeader) {
+      switch (nodeKind) {
+      case clang::Decl::Var:
+      case clang::Decl::ClassTemplateSpecialization:
+        return false;
+      default:
+        return true;
+      }
+    }
 
     return false;
   }
