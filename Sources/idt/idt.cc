@@ -245,14 +245,12 @@ public:
       }
     }
 
-    bool staticFields = llvm::any_of(D->fields(), [](const clang::FieldDecl* FD) {
-      if (const VarDecl *VD = dyn_cast<VarDecl>(FD)) {
-        return VD->isStaticDataMember() && !VD->hasInit();
-      }
-      return false;
-    });
+    auto *unexportedStatic = FirstUnexportedStaticField(D);
+    if (debuglog && unexportedStatic) {
+      llvm::outs() << "Found unexported class " << D->getName() << " with static field " << unexportedStatic->getName() << "\n";
+    }
 
-    bool requiresExport = outOfLineMembers || staticFields;
+    bool requiresExport = outOfLineMembers || unexportedStatic != NULL;
 
     // Don't add DLL export to PoD structs that also have no methods
     if (skip_simple_classes && !requiresExport) {
@@ -721,6 +719,20 @@ public:
 
   void SetSema(clang::Sema& sema) {
     this->sema = &sema;
+  }
+
+  VarDecl *FirstUnexportedStaticField(clang::CXXRecordDecl *D) {
+    for (clang::Decl* FD : D->decls()) {
+      VarDecl *VD = clang::dyn_cast<VarDecl>(FD);
+      if (!VD)
+        continue;
+      if (!VD->isStaticDataMember() || VD->hasInit())
+        continue;
+
+      if (!isAlreadyExported(VD, false))
+        return VD;
+    }
+    return NULL;
   }
 
   bool isAlreadyExported(const clang::Decl *D, bool ignoreInherited) {
