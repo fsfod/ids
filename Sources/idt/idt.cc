@@ -579,6 +579,44 @@ public:
       << clang::FixItHint::CreateInsertion(insert_point, template_export_macro + " ");
   }
 
+  bool VisitCXXMethodDecl(clang::CXXMethodDecl * D) {
+    auto spec = D->getTemplateSpecializationKind();
+    // Were looking for explicit specialization member functions
+    if (spec != TSK_ExplicitSpecialization)
+      return true;
+
+    auto fileLoc = GetFileLocation(D->getInnerLocStart());
+
+    if (D->hasBody())
+      return true;
+
+    if (D->isInlined())
+      return true;
+
+    if (ShouldSkipDeclaration(D))
+      return true;
+    
+    MemberSpecializationInfo *Info = D->getMemberSpecializationInfo();
+    if (!Info)
+      return true;
+    
+    auto *member = Info->getInstantiatedFrom();
+    if (!member)
+      return true;
+
+    if (isAlreadyExported(D, false))
+      return true;
+
+    clang::FullSourceLoc location = get_location(D);
+
+    unexported_public_interface(location)
+      << D
+      << clang::FixItHint::CreateInsertion(D->getInnerLocStart(),
+        function_export_macro + " ");
+
+    return true;
+  }
+
   bool VisitFunctionDecl(clang::FunctionDecl *FD) {
     clang::FullSourceLoc location = get_location(FD);
 
