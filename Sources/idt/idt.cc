@@ -487,7 +487,7 @@ public:
       return true;
 
     const auto *FD =
-        clang::cast_if_present<clang::FunctionDecl>(D->getFriendDecl());
+        clang::dyn_cast_if_present<clang::FunctionDecl>(D->getFriendDecl());
 
     if (!FD)
       return true;
@@ -522,7 +522,7 @@ public:
     unexported_public_interface(location)
       << FD
       << clang::FixItHint::CreateInsertion(insertion_point,
-        export_macro + " ");
+        function_export_macro + " ");
     return true;
   }
 
