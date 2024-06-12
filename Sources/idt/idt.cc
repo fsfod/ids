@@ -582,10 +582,21 @@ public:
   bool VisitFunctionDecl(clang::FunctionDecl *FD) {
     clang::FullSourceLoc location = get_location(FD);
 
-    if (FD->isCXXClassMember())
+    if (ShouldSkipDeclaration(FD))
       return true;
 
-    if (ShouldSkipDeclaration(FD))
+    // hasBody can be false in lots of cases while the method is still declared inline of the class.
+    if(FD->isInlined())
+      return true;
+    
+    // If the function has a body, it can be materialized by the user.
+    if (FD->hasBody())
+      return true;
+
+    if (FD->getTemplateSpecializationKind() == TSK_ExplicitInstantiationDeclaration)
+      return true;
+
+    if (FD->isCXXClassMember())
       return true;
 
     if (isAlreadyExported(FD, true))
@@ -593,10 +604,6 @@ public:
 
     // We are only interested in non-dependent types.
     if (FD->isDependentContext())
-      return true;
-
-    // If the function has a body, it can be materialized by the user.
-    if (FD->hasBody())
       return true;
 
     if (FD->hasAttr<BuiltinAttr>()) {
