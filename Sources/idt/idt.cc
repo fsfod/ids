@@ -240,6 +240,8 @@ public:
         if (MD->isInlined() || (def && def->isInlined())) {
           continue;
         }
+        if (isAlreadyExported(MD, false))
+          continue;
         outOfLineMembers = true;
         break;
       }
