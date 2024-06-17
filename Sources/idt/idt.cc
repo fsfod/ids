@@ -252,7 +252,7 @@ public:
       llvm::outs() << "Found unexported class " << D->getName() << " with static field " << unexportedStatic->getName() << "\n";
     }
 
-    bool requiresExport = outOfLineMembers || unexportedStatic != NULL;
+    bool requiresExport = outOfLineMembers || unexportedStatic != NULL || D->isAbstract();
 
     // Don't add DLL export to PoD structs that also have no methods
     if (skip_simple_classes && !requiresExport) {
