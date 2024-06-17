@@ -409,7 +409,7 @@ public:
 
   bool VisitVarDecl(clang::VarDecl *VD) {
 
-    if (VD->isCXXClassMember())
+    if (VD->isCXXClassMember() || clang::isa<clang::ParmVarDecl>(VD))
       return true;
 
     clang::FullSourceLoc location = get_location(VD);
