@@ -1,5 +1,7 @@
 add_executable(idt
-  idt.cc)
+  idt.cc
+  FixItRewriter2.cpp)
+
 target_compile_definitions(idt PRIVATE
   ${LLVM_DEFINITIONS})
 target_compile_options(idt PRIVATE

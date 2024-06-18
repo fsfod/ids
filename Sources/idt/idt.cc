@@ -18,6 +18,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/GlobPattern.h"
 #include "llvm/Support/Path.h"
+#include "FixItRewriter2.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -857,7 +858,7 @@ class consumer : public clang::SemaConsumer {
   idt::visitor visitor_;
 
   fixit_options options_;
-  std::unique_ptr<clang::FixItRewriter> rewriter_;
+  std::unique_ptr<clang::FixItRewriter2> rewriter_;
 
 public:
   explicit consumer(clang::ASTContext &context, bool skipFunctionBodies, llvm::StringMap<std::string> &allFileChanges)
@@ -872,7 +873,7 @@ public:
     if (apply_fixits) {
       clang::DiagnosticsEngine &diagnostics_engine = context.getDiagnostics();
       rewriter_ =
-          std::make_unique<clang::FixItRewriter>(diagnostics_engine,
+          std::make_unique<clang::FixItRewriter2>(diagnostics_engine,
                                                  SM,
                                                  context.getLangOpts(),
                                                  &options_);
@@ -882,8 +883,7 @@ public:
     visitor_.TraverseDecl(context.getTranslationUnitDecl());
 
     if (apply_fixits) {
-      RewritesReceiver Rec(rewriter_->Rewrite);
-      rewriter_->Editor.applyRewrites(Rec);
+      rewriter_->ProcessRewrites();
 
       for (auto I = rewriter_->buffer_begin(), 
                 E = rewriter_->buffer_end(); I != E; I++) {
