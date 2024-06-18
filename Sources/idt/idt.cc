@@ -338,7 +338,7 @@ public:
 
   bool VisitClassTemplateSpecializationDecl(clang::ClassTemplateSpecializationDecl *D) {
     clang::FullSourceLoc location = get_location(D);
-    const auto filename = location.getFileEntry()->getName();
+    const auto filename = location.getFileEntryRef()->getName();
     int line = location.getLineNumber();
 
     if (D->getTemplateSpecializationKind() != TSK_ExplicitInstantiationDeclaration)
@@ -347,7 +347,7 @@ public:
     if (ShouldSkipDeclaration(D))
       return true;
 
-    if (!D->getExternLoc().isValid()) {
+    if (!D->getExternKeywordLoc().isValid()) {
       LogSkippedDecl(D, location, "extern location is not valid");
       return true;
     }
@@ -360,7 +360,7 @@ public:
     std::string exportMacro = template_export_macro;
 
     // TODO is there a better way todo this
-    auto sourceText = GetSourceTextForRange(clang::SourceRange(D->getExternLoc(), D->getLocation()));
+    auto sourceText = GetSourceTextForRange(clang::SourceRange(D->getExternKeywordLoc(), D->getLocation()));
     // Don't apply the macro if it already has one
     if (sourceText.contains(exportMacro)) {
       return true;
@@ -374,7 +374,7 @@ public:
     }
     // Insert one space after the keyword
     keywordOffset += D->isStruct() ? 7 : 6;
-    auto insertion_point = D->getExternLoc().getLocWithOffset(keywordOffset);
+    auto insertion_point = D->getExternKeywordLoc().getLocWithOffset(keywordOffset);
 
     unexported_public_interface(location)
       << D
@@ -462,8 +462,8 @@ public:
 
   void LogSkippedDecl(clang::NamedDecl *D, clang::FullSourceLoc location, const std::string &reason) {
     if (debuglog) {
-      llvm::dbgs() << "Skipping " << D->getName() << reason << "that was declared in " << location.getFileEntry()->getName()
-                   << " line " << location.getLineNumber() << "\n";
+      llvm::dbgs() << "Skipping " << D->getName() << reason << ", declared in " << location.getFileEntryRef()->getName()
+        << " line " << location.getLineNumber() << "\n";
     }
   }
 
@@ -560,7 +560,7 @@ public:
       return true;
 
     if (debuglog) {
-      const auto filename = location.getFileEntry()->getName();
+      const auto filename = location.getFileEntryRef()->getName();
       int line = location.getLineNumber();
       llvm::outs() << "FuncTempl: " << D->getName() << " at " << filename << ":" << line << '\n';
     }
@@ -793,7 +793,7 @@ public:
   }
 
   llvm::StringRef GetLocationFilePath(clang::SourceLocation loc) {
-    return context_.getFullLoc(loc).getFileEntry()->getName();;
+    return context_.getFullLoc(loc).getFileEntryRef()->getName();;
   }
 
   struct FileLoc {
@@ -808,7 +808,7 @@ public:
 
   FileLoc GetFileLocation(clang::SourceLocation loc) {
     clang::FullSourceLoc location = context_.getFullLoc(loc).getExpansionLoc();
-    return FileLoc(location.getFileEntry()->getName(), location.getLineNumber(), location.getColumnNumber());
+    return FileLoc(location.getFileEntryRef()->getName(), location.getLineNumber(), location.getColumnNumber());
   }
 
   SourceRange GetLineSourceRangeLoc(clang::SourceLocation loc, int &offsetInLine) {
@@ -952,15 +952,15 @@ public:
     : PP(PP), SM(PP->getSourceManager()) {
   }
 
-  void InclusionDirective(clang::SourceLocation HashLoc,
-                          const clang::Token &IncludeTok,
-                          clang::StringRef FileName, bool IsAngled,
-                          clang::CharSourceRange FilenameRange,
-                          clang::OptionalFileEntryRef File,
-                          clang::StringRef SearchPath,
-                          clang::StringRef RelativePath,
-                          const clang::Module *Imported,
-                          clang::SrcMgr::CharacteristicKind FileType) override {
+
+  void InclusionDirective(SourceLocation HashLoc,
+                          const Token &IncludeTok, StringRef FileName,
+                          bool IsAngled, CharSourceRange FilenameRange,
+                          OptionalFileEntryRef File,
+                          StringRef SearchPath, StringRef RelativePath,
+                          const Module *SuggestedModule,
+                          bool ModuleImported,
+                          SrcMgr::CharacteristicKind FileType) override {
 
     if (!File || IsAngled || SM.isInSystemHeader(HashLoc)) {
       return; 
