@@ -23,7 +23,6 @@
 #include <iostream>
 #include <set>
 #include <string>
-#pragma hdrstop
 
 namespace idt {
 llvm::cl::OptionCategory category{"interface definition scanner options"};
