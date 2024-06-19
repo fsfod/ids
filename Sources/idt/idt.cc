@@ -652,12 +652,17 @@ public:
     if (ShouldSkipDeclaration(FD))
       return true;
 
-    // hasBody can be false in lots of cases while the method is still declared inline of the class.
-    if(FD->isInlined())
-      return true;
-    
+    const clang::FunctionDecl* defOrDecl = FD->getDefinition();
+
+    if (!defOrDecl)
+      defOrDecl = FD;
+
     // If the function has a body, it can be materialized by the user.
-    if (FD->hasBody())
+    if (defOrDecl->hasBody() || defOrDecl->hasSkippedBody())
+      return true;
+
+    // hasBody can be false in lots of cases while the method is still declared inline of the class.
+    if (defOrDecl->isInlined())
       return true;
 
     if (FD->getTemplateSpecializationKind() == TSK_ExplicitInstantiationDeclaration)
