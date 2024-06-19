@@ -741,7 +741,7 @@ public:
     for (auto *Atrr : D->attrs()) {
       if (clang::isa<DLLExportAttr>(Atrr) || clang::isa<DLLImportAttr>(Atrr) ||
           clang::isa<VisibilityAttr>(Atrr)) {
-        if (Atrr->isInherited() && !ignoreInherited) {
+        if (Atrr->isInherited() && ignoreInherited) {
           if (debuglog) {
             llvm::StringRef name = D->getDeclKindName();
             if (auto *namedDecl = clang::dyn_cast<clang::NamedDecl>(D))
