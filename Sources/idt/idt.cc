@@ -19,6 +19,7 @@
 #include "llvm/Support/GlobPattern.h"
 #include "llvm/Support/Path.h"
 #include "FixItRewriter2.h"
+#include "ExportOptionsConfig.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -29,31 +30,33 @@ namespace idt {
 llvm::cl::OptionCategory category{"interface definition scanner options"};
 }
 
+BaseExportOptions baseOptions;
+
 namespace {
 
-llvm::cl::opt<std::string>
+llvm::cl::opt<std::string, true>
 export_macro("export-macro",
              llvm::cl::desc("The macro to decorate interfaces with"),
              llvm::cl::value_desc("define"), llvm::cl::Required,
-             llvm::cl::cat(idt::category));
+             llvm::cl::cat(idt::category), llvm::cl::location(baseOptions.ExportMacro));
 
-llvm::cl::opt<std::string>
-function_export_macro("function-macro",
-  llvm::cl::desc("The macro to decorate non class functions with"),
+llvm::cl::opt<std::string, true>
+class_export_macro("class-export-macro",
+  llvm::cl::desc("The macro to decorate interfaces with"),
   llvm::cl::value_desc("define"), llvm::cl::Optional,
-  llvm::cl::cat(idt::category));
+  llvm::cl::cat(idt::category), llvm::cl::location(baseOptions.ClassMacro));
 
-llvm::cl::opt<std::string>
-template_export_macro("template-macro",
-  llvm::cl::desc("The macro to decorate non class functions with"),
+llvm::cl::opt<std::string, true>
+template_export_macro("extern-template-macro",
+  llvm::cl::desc("The macro to decorate extern class/function templates with"),
   llvm::cl::value_desc("define"), llvm::cl::Optional,
-  llvm::cl::cat(idt::category));
+  llvm::cl::cat(idt::category), llvm::cl::location(baseOptions.ExternTemplateMacro));
 
-llvm::cl::opt<std::string>
+llvm::cl::opt<std::string, true>
 externc_export_macro("externc_export_macro",
   llvm::cl::desc("The macro to decorate functions declared in extern \"C\" context "),
   llvm::cl::value_desc("define"), llvm::cl::Optional,
-  llvm::cl::cat(idt::category));
+  llvm::cl::cat(idt::category), llvm::cl::location(baseOptions.ExternCMacro));
 
 llvm::cl::opt<bool>
 apply_fixits("apply-fixits", llvm::cl::init(false),
@@ -181,6 +184,7 @@ class visitor : public clang::RecursiveASTVisitor<visitor> {
   clang::ASTContext &context_;
   clang::SourceManager &source_manager_;
   clang::Sema *sema;
+  BaseExportOptions &options;
   bool skip_function_bodies;
 
   clang::DiagnosticBuilder
@@ -211,9 +215,9 @@ class visitor : public clang::RecursiveASTVisitor<visitor> {
   }
 
 public:
-  explicit visitor(clang::ASTContext &context, bool skipFuncBodies)
+  explicit visitor(clang::ASTContext &context, BaseExportOptions &options,  bool skipFuncBodies)
       : context_(context), source_manager_(context.getSourceManager()), sema(nullptr), 
-        skip_function_bodies(skipFuncBodies) {
+        skip_function_bodies(skipFuncBodies), options(options) {
 
     auto path = source_manager_.getFileEntryRefForID(source_manager_.getMainFileID())->getName();
     llvm::StringRef extension = llvm::sys::path::extension(path);
@@ -377,7 +381,7 @@ public:
     clang::FullSourceLoc location = GetFullExpansionLoc(D->getLocation());
 
     if (exportMacro.empty()) {
-      exportMacro = export_macro;
+      exportMacro = options.ClassMacro;
     }
 
     clang::SourceLocation insertion_point = D->getLocation();
@@ -426,7 +430,7 @@ public:
       return true;
     }
 
-    std::string exportMacro = template_export_macro;
+    std::string exportMacro = options.ExternTemplateMacro;
 
     // TODO is there a better way todo this
     auto sourceText = GetSourceTextForRange(clang::SourceRange(D->getExternKeywordLoc(), D->getLocation()));
@@ -525,7 +529,7 @@ public:
     unexported_public_interface(location)
       << VD
       << clang::FixItHint::CreateInsertion(insertion_point,
-        "LLVM_ABI ");
+        options.ExportMacro + " ");
     return true;
   }
 
@@ -593,7 +597,7 @@ public:
     unexported_public_interface(location)
       << FD
       << clang::FixItHint::CreateInsertion(insertion_point,
-        function_export_macro + " ");
+        options.ExportMacro + " ");
     return true;
   }
 
@@ -660,7 +664,7 @@ public:
       llvm::outs() << "    \"" << lineText << '\"\n';
     }
 
-    if (declartionStart.contains(template_export_macro))
+    if (declartionStart.contains(options.ExternTemplateMacro))
       return;
 
     clang::Lexer lexer(lineRange.getBegin(), context_.getLangOpts(), lineText.begin(), lineText.begin(), lineText.end());
@@ -674,7 +678,7 @@ public:
 
     unexported_public_interface(D->getPointOfInstantiation())
       << D
-      << clang::FixItHint::CreateInsertion(insert_point, template_export_macro + " ");
+      << clang::FixItHint::CreateInsertion(insert_point, options.ExternTemplateMacro + " ");
   }
 
   bool VisitCXXMethodDecl(clang::CXXMethodDecl * D) {
@@ -710,7 +714,7 @@ public:
     unexported_public_interface(location)
       << D
       << clang::FixItHint::CreateInsertion(D->getInnerLocStart(),
-        function_export_macro + " ");
+        options.ExportMacro + " ");
 
     return true;
   }
@@ -754,17 +758,13 @@ public:
       return true;
     }
 
-    if (llvm::isa<clang::FunctionTemplateDecl>(FD)) {
-      
-    }
-
-    std::string &exportMacro = function_export_macro;
+    std::string &exportMacro = options.ExportMacro;
     if (FD->isExternC()) {
       // Don't export extern "C" declared functions by default
-      if (!export_extern_c) {
+      if (!(options.ExportExternC)) {
         return true;
       }
-      exportMacro = externc_export_macro;
+      exportMacro = options.ExternCMacro;
     }
 
     // TODO(compnerd) replace with std::set::contains in C++20
@@ -1238,13 +1238,15 @@ int main(int argc, char *argv[]) {
     llvm::logAllUnhandledErrors(std::move(options.takeError()), llvm::errs());
     return EXIT_FAILURE;
   }
+  baseOptions.IgnoredHeaders = ignored_headers;
 
-  if (function_export_macro == "") {
-    function_export_macro = export_macro.getValue();
+  if (externc_export_macro.getValue() == "") {
+    externc_export_macro = export_macro.getValue();
+    baseOptions.ExportExternC = true;
   }
 
-  if (externc_export_macro == "") {
-    externc_export_macro = function_export_macro.getValue();
+  if (!BuildIgnoredCXXRecordNames()) {
+    return 1;
   }
 
   auto InferedDB = inferMissingCompileCommands(std::make_unique<MemCDB>(options->getCompilations()));
