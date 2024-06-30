@@ -316,9 +316,6 @@ public:
       return true;
     }
 
-    clang::SourceLocation insertion_point = D->getLocation();
-    std::string exportMacro = export_macro;
-
     if (CTSD) {
       if (debuglog) {
         llvm::outs() << "TemplateDecl: " << CTSD->getNameAsString() << ", Body: " << CTSD->hasBody()
@@ -339,21 +336,6 @@ public:
         if (!requiresExport)
           return true;
       }
-    } else {
-      auto *nestedName = D->getQualifier();
-      // Check if the class name is prefixed with a type or namespace 
-      if (nestedName) {
-        // Use namespace prefix starting location to insert at instead of the 
-        // normal class name location that skips the name prefixes
-        insertion_point = D->getQualifierLoc().getBeginLoc();
-      }
-    }
-
-    if (insertion_point.isMacroID()) {
-      if (debuglog) {
-        llvm::outs() << "Skip exporting '" << D->getDeclName() << "' the macro insertion point was inside a macro.\n";
-      }
-      return true;
     }
 
     if (D->isClass() || D->isStruct()) {
@@ -370,11 +352,57 @@ public:
       }
     }
 
+    ExportClass(D);
+    return true;
+  }
+
+  bool VisitClassTemplateDecl(clang::ClassTemplateDecl *D) {
+    if (ShouldSkipDeclaration(D, true))
+      return true;
+
+    clang::VarDecl *unexportedStatic = FirstUnexportedStaticField(D->getTemplatedDecl());
+
+    if (!unexportedStatic)
+      return true;
+
+    if (debuglog) {
+      llvm::outs() << "Found unexported template class " << D->getName() << " with static field " << unexportedStatic->getName() << "\n";
+    }
+
+    ExportClass(D);
+    return true;
+  }
+
+  void ExportClass(clang::NamedDecl *D, llvm::StringRef exportMacro = "") {
+    clang::FullSourceLoc location = GetFullExpansionLoc(D->getLocation());
+
+    if (exportMacro.empty()) {
+      exportMacro = export_macro;
+    }
+
+    clang::SourceLocation insertion_point = D->getLocation();
+
+    if (auto *TD = dyn_cast<clang::TagDecl>(D)) {
+      auto *nestedName = TD->getQualifier();
+      // Check if the class name is prefixed with a type or namespace 
+      if (nestedName) {
+        // Use namespace prefix starting location to insert at instead of the 
+        // normal class name location that skips the name prefixes
+        insertion_point = TD->getQualifierLoc().getBeginLoc();
+      }
+    }
+
+    if (insertion_point.isMacroID()) {
+      if (debuglog) {
+        LogSkippedDecl(D, location, "' macro insertion point was inside another macro");
+      }
+      return;
+    }
+
     unexported_public_interface(location)
       << D
       << clang::FixItHint::CreateInsertion(insertion_point,
-        exportMacro + " ");
-    return true;
+        (exportMacro + " ").str());
   }
 
   bool VisitClassTemplateSpecializationDecl(clang::ClassTemplateSpecializationDecl *D) {
@@ -425,7 +453,7 @@ public:
     return true;
   }
 
-  bool ShouldSkipDeclaration(clang::Decl *D) {
+  bool ShouldSkipDeclaration(clang::Decl *D, bool allowTemplateDec = false) {
     clang::FullSourceLoc location = get_location(D);
 
     if (isLocationIgnored(location, D->getKind()))
@@ -441,7 +469,7 @@ public:
     if (D->isImplicit())
       return true;
 
-    if (D->isTemplateDecl())
+    if (!allowTemplateDec && D->isTemplateDecl())
       return true;
 
 
@@ -870,6 +898,10 @@ public:
   llvm::StringRef GetSourceTextForRange(clang::SourceRange range) {
     return Lexer::getSourceText(clang::CharSourceRange::getTokenRange(range),
                                 context_.getSourceManager(), context_.getLangOpts());
+  }
+
+  clang::FullSourceLoc GetFullExpansionLoc(clang::SourceLocation loc) {
+     return context_.getFullLoc(loc).getExpansionLoc();
   }
 
 };
