@@ -91,6 +91,13 @@ ignored_headers("header-ignore",
   llvm::cl::cat(idt::category));
 
 llvm::cl::list<std::string>
+ignored_classes("ignore-class",
+  llvm::cl::desc("Ignore one or more class names"),
+  llvm::cl::value_desc("class[,class...]"),
+  llvm::cl::CommaSeparated,
+  llvm::cl::cat(idt::category));
+
+llvm::cl::list<std::string>
 compdb_pathmatch("compdb-pathmatch",
   llvm::cl::desc("File path glob patten of files to process from compilation database"),
   llvm::cl::value_desc("patten[,patten...]"),
@@ -148,6 +155,26 @@ const llvm::SmallVector<llvm::GlobPattern> &get_ignored_headers() {
   return kIgnoredHeaders;
 }
 
+static llvm::StringMap<llvm::SmallVector<std::string, 1>> IgnoredRecordNames;
+
+static bool BuildIgnoredCXXRecordNames() {
+  for (auto& name : ignored_classes) {
+    llvm::StringRef nameRef = name;
+    size_t namespaceEnd = nameRef.rfind("::");
+    if (namespaceEnd != llvm::StringRef::npos) {
+      if (namespaceEnd > (nameRef.size() - 2)) {
+        llvm::errs() << "Bad class name '" << name << "' missing name after namespace prefix";
+        return false;
+      }
+      IgnoredRecordNames[nameRef.substr(namespaceEnd + 2)].push_back(name);
+    }
+    else {
+      IgnoredRecordNames[name].push_back("");
+    }
+  }
+  return true;
+}
+
 
 namespace idt {
 class visitor : public clang::RecursiveASTVisitor<visitor> {
@@ -197,6 +224,20 @@ public:
 
   bool debuglog = false;
   bool isMainFileAHeader = true;
+
+  bool IsCXXRecordNameIngored(clang::CXXRecordDecl *D) {
+    auto it = IgnoredRecordNames.find(D->getName());
+    if (it != IgnoredRecordNames.end()) {
+      auto nameVec = it->getValue();
+
+      for (auto& name : nameVec) {
+        if (name == "")
+          return true;
+
+      }
+    }
+    return false;
+  }
 
   bool VisitCXXRecordDecl(clang::CXXRecordDecl *D) {
     if (D->isEnum())
