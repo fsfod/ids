@@ -7,6 +7,7 @@
 #include "clang/Edit/EditsReceiver.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
+#include "clang/Lex/PreprocessorOptions.h"
 #include "clang/Rewrite/Frontend/FixItRewriter.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/CommonOptionsParser.h"
@@ -20,11 +21,40 @@
 #include "llvm/Support/Path.h"
 #include "FixItRewriter2.h"
 #include "ExportOptionsConfig.h"
+#include "FindIncludes.h"
 
 #include <cstdlib>
 #include <iostream>
 #include <set>
 #include <string>
+
+class ResultCollector : public ThreadSafeToolResults<std::string, std::string> {
+public:
+  ResultCollector(FileOptionLookup *fileOptions, BaseExportOptions *exportOptions = nullptr)
+    : FileExportOptions(fileOptions), DefaultExportOptions(exportOptions) {
+  }
+
+  ResultCollector(BaseExportOptions *exportOptions)
+    : FileExportOptions(nullptr), DefaultExportOptions(exportOptions) {
+  }
+
+  BaseExportOptions *getFileExportOptions(FileEntryRef file) {
+    if (!FileExportOptions) {
+      return DefaultExportOptions;
+    }
+
+    auto it = FileExportOptions->find(file.getUniqueID());
+    return it != FileExportOptions->end() ? it->second : NULL;
+  }
+
+  BaseExportOptions *getDefaultExportOptions() {
+    return DefaultExportOptions;
+  }
+
+protected:
+  FileOptionLookup *FileExportOptions;
+  BaseExportOptions *DefaultExportOptions;
+};
 
 namespace idt {
 llvm::cl::OptionCategory category{"interface definition scanner options"};
@@ -81,7 +111,7 @@ mainfileonly("mainfileonly", llvm::cl::init(false),
   llvm::cl::cat(idt::category));
 
 llvm::cl::opt<std::string>
-header_directory("headerdir",
+root_header_directory("headerdir",
   llvm::cl::desc("Directory to recursively search for headers to rewrite"),
   llvm::cl::value_desc("define"),
   llvm::cl::cat(idt::category));
@@ -137,27 +167,6 @@ const std::set<std::string> &get_ignored_functions() {
 }
 
 }
-
-const llvm::SmallVector<llvm::GlobPattern> &get_ignored_headers() {
-  static auto kIgnoredHeaders = [&]() -> auto {
-    llvm::SmallVector<llvm::GlobPattern> headers;
-    llvm::SmallString<256> root;
-    llvm::sys::path::native(header_directory, root);
-
-    for (const auto& P : ignored_headers) {
-      auto Patten = llvm::GlobPattern::create(P);
-      if (!Patten) {
-        llvm::outs() << "Bad header path glob " << P << Patten.takeError();
-      } else {
-        headers.push_back(std::move(Patten.get()));
-      }
-    }
-    return headers;
-  }();
-
-  return kIgnoredHeaders;
-}
-
 static llvm::StringMap<llvm::SmallVector<std::string, 1>> IgnoredRecordNames;
 
 static bool BuildIgnoredCXXRecordNames() {
@@ -381,7 +390,7 @@ public:
     clang::FullSourceLoc location = GetFullExpansionLoc(D->getLocation());
 
     if (exportMacro.empty()) {
-      exportMacro = options.ClassMacro;
+      exportMacro = options.ClassMacro.empty() ? options.ExportMacro : options.ClassMacro;
     }
 
     clang::SourceLocation insertion_point = D->getLocation();
@@ -403,6 +412,48 @@ public:
       return;
     }
 
+    unexported_public_interface(location)
+      << D
+      << clang::FixItHint::CreateInsertion(insertion_point,
+        (exportMacro + " ").str());
+  }
+
+  void ExportFunction(clang::FunctionDecl *D, llvm::StringRef exportMacro = "") {
+    clang::FullSourceLoc location = GetFullExpansionLoc(D->getLocation());
+
+    if (exportMacro.empty()) {
+      exportMacro = options.ExportMacro;
+    }
+
+    clang::SourceLocation insertion_point = insertion_point = D->getBeginLoc();
+    if (D->getTemplatedKind() != clang::FunctionDecl::TK_NonTemplate) {
+      insertion_point = D->getInnerLocStart();
+    } else if (func_macro_on_name) {
+      auto *nestedName = D->getQualifier();
+      // Check if the function name is prefixed with a type or namespace 
+      if (nestedName) {
+        // Use namespace prefix starting location to insert at instead of the 
+        // normal class name location that skips the name prefixes
+        insertion_point = D->getQualifierLoc().getBeginLoc();
+      } else {
+        insertion_point = D->getNameInfo().getBeginLoc();
+      }
+    }
+
+    unexported_public_interface(location)
+      << D
+      << clang::FixItHint::CreateInsertion(insertion_point,
+        (exportMacro + " ").str());
+  }
+
+  void ExportVariable(clang::VarDecl *D, llvm::StringRef exportMacro = "") {
+    clang::FullSourceLoc location = GetFullExpansionLoc(D->getLocation());
+
+    if (exportMacro.empty()) {
+      exportMacro = options.ExportMacro;
+    }
+
+    clang::SourceLocation insertion_point = D->getBeginLoc();
     unexported_public_interface(location)
       << D
       << clang::FixItHint::CreateInsertion(insertion_point,
@@ -525,11 +576,7 @@ public:
       return true;
     }
 
-    clang::SourceLocation insertion_point = VD->getBeginLoc();
-    unexported_public_interface(location)
-      << VD
-      << clang::FixItHint::CreateInsertion(insertion_point,
-        options.ExportMacro + " ");
+    ExportVariable(VD);
     return true;
   }
 
@@ -771,25 +818,7 @@ public:
     if (contains(get_ignored_functions(), FD->getNameAsString()))
       return true;
 
-    clang::SourceLocation insertion_point = insertion_point = FD->getBeginLoc();
-    if (FD->getTemplatedKind() != clang::FunctionDecl::TK_NonTemplate) {
-      insertion_point = FD->getInnerLocStart();
-    } else if(func_macro_on_name) {
-      auto *nestedName = FD->getQualifier();
-      // Check if the function name is prefixed with a type or namespace 
-      if (nestedName) {
-        // Use namespace prefix starting location to insert at instead of the 
-        // normal class name location that skips the name prefixes
-        insertion_point = FD->getQualifierLoc().getBeginLoc();
-      } else {
-        insertion_point = FD->getNameInfo().getBeginLoc();
-      }
-    }
-
-    unexported_public_interface(location)
-        << FD
-        << clang::FixItHint::CreateInsertion(insertion_point,
-                                             exportMacro + " ");
+    ExportFunction(FD, exportMacro);
     return true;
   }
 
@@ -813,8 +842,17 @@ public:
 
   bool isAlreadyExported(const clang::Decl *D, bool ignoreInherited) {
     for (auto *Atrr : D->attrs()) {
-      if (clang::isa<DLLExportAttr>(Atrr) || clang::isa<DLLImportAttr>(Atrr) ||
-          clang::isa<VisibilityAttr>(Atrr)) {
+
+      if (auto *annotation = clang::dyn_cast<AnnotateAttr>(Atrr)) {
+        if (annotation->getAnnotation() == "idt_export") {
+          if (debuglog) {
+            llvm::StringRef name = D->getDeclKindName();
+            llvm::outs() << "Skipped '" << name << "' that already has export macro\n";
+          }
+          return true;
+        }
+      } else if (clang::isa<DLLExportAttr>(Atrr) || clang::isa<DLLImportAttr>(Atrr) ||
+                 clang::isa<VisibilityAttr>(Atrr)) {
         if (Atrr->isInherited() && ignoreInherited) {
           if (debuglog) {
             llvm::StringRef name = D->getDeclKindName();
@@ -934,16 +972,15 @@ class consumer : public clang::SemaConsumer {
   };
 
   idt::visitor visitor_;
-
+  ResultCollector &owner;
   fixit_options options_;
   std::unique_ptr<clang::FixItRewriter2> rewriter_;
 
 public:
-  explicit consumer(clang::ASTContext &context, bool skipFunctionBodies, llvm::StringMap<std::string> &allFileChanges)
-      : visitor_(context, skipFunctionBodies), filechanges(allFileChanges) {}
+  explicit consumer(clang::ASTContext &context, BaseExportOptions &exportOptions, bool skipFunctionBodies, ResultCollector &owner)
+      : visitor_(context, exportOptions, skipFunctionBodies), owner(owner) {}
 
 
-  llvm::StringMap<std::string>& filechanges;
 
   void HandleTranslationUnit(clang::ASTContext &context) override {
     SourceManager& SM = context.getSourceManager();
@@ -969,17 +1006,15 @@ public:
 
         llvm::SmallString<255> name = Entry->getName();
         llvm::sys::path::native(name);
-
-        auto pair = filechanges.try_emplace(name);
-        if (pair.second) {
+        
+        if (!owner.hasResult(name.str().str())) {
           std::string output;
           llvm::raw_string_ostream OS(output);
 
           RewriteBuffer &RewriteBuf = I->second;
           RewriteBuf.write(OS);
           OS.flush();
-
-          pair.first->second = std::move(output);
+          owner.addResult(name.str().str(), output);
         } else {
           llvm::outs() << "Skipped duplicate write to: " << name << '\n';
         }
@@ -994,11 +1029,54 @@ public:
 };
 
 struct action : clang::ASTFrontendAction {
-  llvm::StringMap<std::string>& filechanges;
+  FileOptionLookup& fileExportOptions;
+  ResultCollector& owner;
 
-  action(llvm::StringMap<std::string> &filechanges) 
-    : filechanges(filechanges) {
+  action(ResultCollector& owner)
+    : owner(owner), fileExportOptions(fileExportOptions) {
 
+  }
+
+  BaseExportOptions *exportOptions;
+
+  bool BeginInvocation(CompilerInstance &CI) override {
+    auto name = getCurrentFileOrBufferName();
+    auto errorOrFile = CI.getFileManager().getFileRef(name);
+
+    if (errorOrFile) {
+      exportOptions = owner.getFileExportOptions(errorOrFile.get());
+    } else {
+      exportOptions = owner.getDefaultExportOptions();
+    }
+
+    auto &PreproOpts = CI.getPreprocessorOpts();
+//CI.getLangOpts().MSVCCompat
+    llvm::StringRef annotate = "=__attribute__((annotate(\"idt_export\")))";
+
+    PreproOpts.addMacroDef((exportOptions->ExportMacro + annotate).str());
+
+    if (!exportOptions->ClassMacro.empty()) {
+      PreproOpts.addMacroDef((exportOptions->ClassMacro + annotate).str());
+    }
+
+    if (!exportOptions->ExternCMacro.empty() && 
+        exportOptions->ExternCMacro != exportOptions->ExportMacro) {
+      PreproOpts.addMacroDef((exportOptions->ExternCMacro + annotate).str());
+    }
+
+    if (!exportOptions->ExternTemplateMacro.empty()) {
+      PreproOpts.addMacroDef((exportOptions->ExternTemplateMacro + annotate).str());
+    }
+
+    for (auto& name : exportOptions->OtherExportMacros) {
+      PreproOpts.addMacroDef((name + annotate).str());
+    }
+
+    if (!exportOptions->IsGeneratingMacro.empty()) {
+      PreproOpts.addMacroDef(exportOptions->IsGeneratingMacro);
+    }
+
+    return clang::ASTFrontendAction::BeginInvocation(CI);
   }
 
   std::unique_ptr<clang::ASTConsumer>
@@ -1011,197 +1089,21 @@ struct action : clang::ASTFrontendAction {
     DiagnosticsEngine &Diag = getCompilerInstance().getDiagnostics();
     Diag.setSeverity(clang::diag::warn_unused_private_field, diag::Severity::Ignored, SourceLocation());
 
-    return std::make_unique<idt::consumer>(CI.getASTContext(), skipFunctionBodies, filechanges);
+    return std::make_unique<idt::consumer>(CI.getASTContext(), *exportOptions, skipFunctionBodies, owner);
   }
 };
 
-struct factory : clang::tooling::FrontendActionFactory {
-  llvm::StringMap<std::string> allfilechanges;
-  std::unique_ptr<clang::FrontendAction> create() override {
-    return std::make_unique<idt::action>(allfilechanges);
-  }
-};
-}
-
-class IncludeFinder : public clang::PPCallbacks {
-
+struct factory : public ResultCollector, clang::tooling::FrontendActionFactory {
 public:
-  explicit IncludeFinder(clang::Preprocessor *PP) 
-    : PP(PP), SM(PP->getSourceManager()) {
+  factory(FileOptionLookup *exportOptions) 
+    : ResultCollector(exportOptions) {
   }
 
-
-  void InclusionDirective(SourceLocation HashLoc,
-                          const Token &IncludeTok, StringRef FileName,
-                          bool IsAngled, CharSourceRange FilenameRange,
-                          OptionalFileEntryRef File,
-                          StringRef SearchPath, StringRef RelativePath,
-                          const Module *SuggestedModule,
-                          bool ModuleImported,
-                          SrcMgr::CharacteristicKind FileType) override {
-
-    if (!File || IsAngled || SM.isInSystemHeader(HashLoc)) {
-      return; 
-    }
-
-    if (!File) return; // Handle cases where the included file is not found
-    llvm::SmallString<256> nativePath = File->getName();
-    llvm::sys::path::native(nativePath);
- 
-    IncludedHeaders.insert(nativePath);
-
-    if (File->getName().contains("llvm") || File->getName().contains("clang")) {
-      //llvm::outs() << "Included file: " << File->getName() << "\n";
-    }
-
-  }
-
-  void FileChanged(SourceLocation Loc, FileChangeReason Reason,
-                   SrcMgr::CharacteristicKind NewFileType, FileID prevId) override {
-
-    if (Reason != EnterFile)
-      return;
-    auto fullloc = FullSourceLoc(Loc, SM);
-    FileID Id = fullloc.getFileID();
-    auto file = fullloc.getFileEntryRef();
-    if (file && !fullloc.isInSystemHeader()) {
-      auto name = file->getName();
-     // llvm::outs() << "  Entered: " << name << "\n";
-    } else {
-      return;
-    }
-  }
-
-  llvm::StringSet<> IncludedHeaders;
 private:
-  clang::SourceManager &SM;
-  clang::Preprocessor *PP;
+  std::unique_ptr<clang::FrontendAction> create() override {
+    return std::make_unique<idt::action>(*this);
+  }
 };
-
-typedef std::pair<std::string, llvm::StringSet<>> FileIncludeResults;
-
-class FindIncludesAction : public clang::PreprocessorFrontendAction {
-public:
-  FindIncludesAction(std::vector<FileIncludeResults>& includeList)
-    : headerIncludes(includeList) {
-
-  }
-protected:
-  void ExecuteAction() override {
-
-    clang::CompilerInstance &CI = getCompilerInstance();
-    auto &PP = CI.getPreprocessor();
-
-    auto includeFinders = new IncludeFinder(&PP);
-    PP.addPPCallbacks(std::unique_ptr<PPCallbacks>(includeFinders));
-    PP.IgnorePragmas();
-
-    // First let the preprocessor process the entire file and call callbacks.
-    // Callbacks will record which #include's were actually performed.
-    PP.EnterMainSourceFile();
-    Token Tok;
-    // Only preprocessor directives matter here, so disable macro expansion
-    // everywhere else as an optimization.
-    // TODO: It would be even faster if the preprocessor could be switched
-    // to a mode where it would parse only preprocessor directives and comments,
-    // nothing else matters for parsing or processing.
-    PP.SetMacroExpansionOnlyInDirectives();
-    do {
-      PP.Lex(Tok);
-      //if (Tok.is(tok::annot_module_begin))
-       // Rewrite->handleModuleBegin(Tok);
-    } while (Tok.isNot(tok::eof));
-   // RewriteMacrosInInput(CI.getPreprocessor(), OS.get());
-
-    auto &SM = PP.getSourceManager();
-    const auto &file = SM.getFileEntryRefForID(SM.getMainFileID());
-    headerIncludes.push_back(std::make_pair(file->getName().str(), includeFinders->IncludedHeaders));
-  }
-
-public:
-  std::vector<FileIncludeResults> &headerIncludes;
-};
-
-
-bool GatherHeadersInDirectory(llvm::StringRef directory, std::vector<std::string> &headerPaths) {
-  using namespace llvm::sys::fs;
-  using namespace llvm::sys;
-  std::error_code ec;
-
-  for (recursive_directory_iterator F(directory, ec), E; F != E; F.increment(ec)) {
-    if (ec) {
-      llvm::errs() << "Directory iterator error'ed when trying to find headers: " << ec.message();
-      return false;
-    }
-    std::string path = F->path();
-    if (F->type() == file_type::regular_file) {
-      if (path::extension(path) == ".h") {
-        headerPaths.push_back(F->path());
-      } else {
-        llvm::outs() << "Skipped non header file: " << F->path() << "\n";
-      }
-    }
-  }
-  return true;
-}
-
-class FindIncludesFrontendActionFactory : public clang::tooling::FrontendActionFactory {
-public:
-  std::unique_ptr<FrontendAction> create() override {
-    return std::make_unique<FindIncludesAction>(headerIncludes);
-  }
-
-  std::vector<std::pair<std::string, llvm::StringSet<>>> headerIncludes;
-};
-
-bool GatherHeaders(clang::tooling::CommonOptionsParser &options, std::vector<std::string>& rootheaders) {
-  using namespace llvm::sys::fs;
-  using namespace clang::tooling;
-
-  std::vector<std::string> files;
-  if (!is_directory(header_directory)) {
-    llvm::errs() << "Header directory \"" << header_directory << "\" does not exist\n";
-    return false;
-  }
-
-  llvm::SmallString<256> NativePath;
-  llvm::sys::path::native(header_directory, NativePath);
-  if (!GatherHeadersInDirectory(NativePath, files)) {
-    return false;
-  }
-  auto factory = std::make_unique<FindIncludesFrontendActionFactory>();
-
-  auto excludes = get_ignored_headers();
-  auto end = llvm::remove_if(files, [&](std::string &s) {
-    StringRef RelativePath = llvm::StringRef(s).substr(NativePath.size() + 1);
-    for (const auto& Pat : excludes) {
-      if (Pat.match(RelativePath)) {
-        llvm::errs() << "Skipped ignored header: " << s << "\n";
-        return true;
-      }
-    }
-    
-    return false;
-  });
-  files = std::vector(files.begin(), end);
-
-  ClangTool tool2(options.getCompilations(), files);
-  tool2.run(factory.get());
-
-  llvm::StringSet<> nonroots;
-  for (auto header : factory->headerIncludes) {
-    for (auto &path : header.second) {
-      nonroots.insert(path.getKey());
-    }
-  }
-
-  for (auto &path : files) {
-    if (!nonroots.contains(path)) {
-      rootheaders.push_back(path);
-    }
-  }
-
-  return true;
 }
 
 class MemCDB : public clang::tooling::CompilationDatabase {
@@ -1228,6 +1130,7 @@ private:
 
 int main(int argc, char *argv[]) {
   using namespace clang::tooling;
+  using namespace llvm::sys::path;
 
 
   auto options =
@@ -1254,6 +1157,9 @@ int main(int argc, char *argv[]) {
   if (mainfileonly.getNumOccurrences() == 0) {
     mainfileonly = true;
   }
+
+  ExportOptions exportOptions;
+  FileOptionLookup fileOptions;
 
   std::vector<std::string> sourcePathList;
   bool singleFile = true;
@@ -1284,11 +1190,29 @@ int main(int argc, char *argv[]) {
       return EXIT_FAILURE;
     }
 
-  } else if (!header_directory.empty()) {
+  } else if (!root_header_directory.empty()) {
     singleFile = false;
-    if (!GatherHeaders(options.get(), sourcePathList)) {
+    auto error = ExportOptions::loadFromDirectory(root_header_directory, exportOptions);
+    exportOptions.setOverridesAndDefaults(baseOptions);
+
+    if (error) {
+      llvm::errs() << "Reading export_config.json failed: " << error;
       return EXIT_FAILURE;
     }
+    FileManager *FileMgr =
+      new FileManager(FileSystemOptions(), llvm::vfs::getRealFileSystem());
+    
+    llvm::SmallString<256> headerDirectory;
+    std::vector<std::string> files;
+
+    if (auto err = exportOptions.gatherAllFiles(root_header_directory, sourcePathList, fileOptions)) {
+      llvm::errs() << err;
+      return EXIT_FAILURE;
+    }
+    
+   // if (!GatherHeaders(options.get(), sourcePathList)) {
+    //  return EXIT_FAILURE;
+   // }
   }
 
   std::unique_ptr<ClangTool> tool;
@@ -1299,13 +1223,20 @@ int main(int argc, char *argv[]) {
   }
 
   int result;
-  auto factory = std::make_unique<idt::factory>();
-  result = tool->run(factory.get());
+  idt::factory factory(&fileOptions);
+  //result = tool->run(&factory); parallel
 
-  if (!factory->allfilechanges.empty()) {
+  llvm::Error err = runClangToolMultithreaded(*InferedDB.get(), factory, sourcePathList);
+
+  if (err) {
+    llvm::errs() << "Running ASTAction failed:" << err;
+    return EXIT_FAILURE;
+  }
+
+  if (factory.hasResults()) {
     llvm::outs() << "Files to modify:\n";
-    for (auto & pair : factory->allfilechanges) {
-      llvm::StringRef filename = pair.first();
+    for (auto & pair : factory.results()) {
+      llvm::StringRef filename = pair.first;
       llvm::outs() << "  " << filename << '\n';
     }
     char c;
@@ -1323,10 +1254,10 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  for (auto & pair : factory->allfilechanges){
+  for (auto & pair : factory.results()){
     std::error_code EC;
     std::unique_ptr<llvm::raw_fd_ostream> OS;
-    llvm::StringRef filename = pair.first();
+    llvm::StringRef filename = pair.first;
     OS.reset(new llvm::raw_fd_ostream(filename, EC, llvm::sys::fs::OF_None));
     if (EC) {
       llvm::errs() << "Failed to write changes for '" << filename << "', Unable to open file error was " << EC.message();
@@ -1337,7 +1268,7 @@ int main(int argc, char *argv[]) {
     OS->flush();
   }
 
-  if (!factory->allfilechanges.empty()) {
+  if (factory.hasResults()) {
     llvm::outs() << "all file changes written.\n";
   }
 

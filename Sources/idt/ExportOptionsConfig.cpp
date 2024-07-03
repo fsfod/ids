@@ -1,14 +1,16 @@
+#include "clang/Basic/FileManager.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/Path.h"
 #include "ExportOptionsConfig.h"
+#include "FindIncludes.h"
 
 using namespace llvm::json;
 using namespace llvm;
 
 static bool fromJSON(const json::Value &E, BaseExportOptions &opts, json::Path P);
 
-llvm::Error ExportOptions::LoadFromFile(StringRef path, ExportOptions& options) {
+llvm::Error ExportOptions::loadFromFile(StringRef path, ExportOptions& options) {
 
   ErrorOr<std::unique_ptr<MemoryBuffer>> bufferOrErr = MemoryBuffer::getFile(path);
 
@@ -18,13 +20,13 @@ llvm::Error ExportOptions::LoadFromFile(StringRef path, ExportOptions& options) 
   return options.Load(bufferOrErr.get()->getBuffer());
 }
 
-Error ExportOptions::LoadFromDirectory(const std::string &path, ExportOptions& options) {
+Error ExportOptions::loadFromDirectory(const std::string &path, ExportOptions& options) {
   SmallString<256> pathBuf(path);
   sys::path::append(pathBuf, "export_options.json");
   if (!sys::fs::is_regular_file(pathBuf)) {
     return createStringError(errc::no_such_file_or_directory, "directory has no export_options.json");
   }
-  return LoadFromFile(pathBuf, options);
+  return loadFromFile(pathBuf, options);
 }
 
 Error ExportOptions::Load(StringRef text) {
@@ -60,32 +62,43 @@ Error ExportOptions::Load(StringRef text) {
   return Error::success();
 }
 
-void ExportOptions::PropagateDefaults(const std::string& exportMacro) {
+void setOverride(std::string& value, const std::string& override) {
+  if (!override.empty())
+    value = override;
+}
 
-  if (!exportMacro.empty()) {
-    ExportMacro = exportMacro;
-  }
+void setDefault(std::string& value, const std::string &defaultValue) {
+  if (value.empty())
+    value = defaultValue;
+}
 
-  if (ClassMacro.empty()) {
-    ClassMacro = ExportMacro;
-  }
+void ExportOptions::setOverridesAndDefaults(const BaseExportOptions &options) {
 
-  if (ExternCMacro.empty()) {
-    ExternCMacro = ExportMacro;
-  }
+  setOverride(ExportMacro, options.ExportMacro);
+  setOverride(ClassMacro, options.ClassMacro);
+  setOverride(ExternCMacro, options.ExternCMacro);
+  setOverride(ExportTemplateMacro, options.ExportTemplateMacro);
+  setOverride(ExternTemplateMacro, options.ExternTemplateMacro);
+  setOverride(ExportMacro, options.ExportMacro);
+  setOverride(IsGeneratingMacro, options.IsGeneratingMacro);
+ 
+  OtherExportMacros.insert(OtherExportMacros.end(), options.OtherExportMacros.begin(), options.OtherExportMacros.end());
+
+  if (options.ExportExternC)
+    ExportExternC = true;
+
+  if (options.ExportSimpleClasses)
+    ExportSimpleClasses = true;
 
   for (auto &group : Groups) {
-    if (group.ExportMacro.empty()) {
-      group.ExportMacro = ExportMacro;
-    }
+    setDefault(group.ExportMacro, ExportMacro);
+    setDefault(group.ClassMacro, ClassMacro);
+    setDefault(group.ExportTemplateMacro, ExportTemplateMacro);
+    setDefault(group.ExternTemplateMacro, ExternTemplateMacro);
+    setDefault(group.ExternCMacro, ExternCMacro);
+    setDefault(group.IsGeneratingMacro, IsGeneratingMacro);
 
-    if (group.ClassMacro.empty()) {
-      group.ClassMacro = group.ExportMacro;
-    }
-
-    if (group.ExternCMacro.empty()) {
-      group.ExternCMacro = group.ExportMacro;
-    }
+    group.OtherExportMacros.insert(group.OtherExportMacros.end(), OtherExportMacros.begin(), OtherExportMacros.end());
   }
 }
 
@@ -95,18 +108,18 @@ bool fromJSON(const json::Value &E, HeaderGroupOptions &opts, json::Path P) {
   if (!map.mapOptional("name", opts.Name))
     return false;
 
-  if (!map.mapOptional("headerDirectory", opts.HeaderDir))
+  if (!map.mapOptional("headerDirectories", opts.HeaderDirectories))
     return false;
 
-  if (!map.mapOptional("headers", opts.Headers))
+  if(!fromJSON(E, static_cast<BaseExportOptions&>(opts), P))
     return false;
 
-  if (opts.Headers.empty() && opts.HeaderDir.empty()) {
-    P.report("headers or headerDirectory field must be defined and non empty");
+  if (opts.HeaderFiles.empty() && opts.HeaderDirectories.empty()) {
+    P.report("headerFiles or headerDirectories field must be defined and non empty");
     return false;
   }
 
-  return fromJSON(E, static_cast<BaseExportOptions&>(opts), P);
+  return true;
 }
 
 template<typename T> bool MapEnumFlag(ObjectMapper &map, StringLiteral prop, T &enumField, T enumValue) {
@@ -121,22 +134,109 @@ template<typename T> bool MapEnumFlag(ObjectMapper &map, StringLiteral prop, T &
 bool fromJSON(const json::Value &E, BaseExportOptions &opts, json::Path P) {
   ObjectMapper map(E, P);
 
-  if (opts.IsRoot && !map.mapOptional("headers", opts.Headers))
-    return false;
-
   if(!map.mapOptional("exportSimpleClasses", opts.ExportSimpleClasses))
     return false;
 
   if(!map.mapOptional("exportExternC", opts.ExportExternC))
     return false;
 
-  if (!(map.mapOptional("exportMacro", opts.ExportMacro) &&
+  if (!(map.mapOptional("headerFiles", opts.HeaderFiles) && 
+        map.mapOptional("exportMacro", opts.ExportMacro) &&
         map.mapOptional("classMacro", opts.ClassMacro) &&
         map.mapOptional("externTemplateMacro", opts.ExternTemplateMacro) &&
         map.mapOptional("exportTemplateMacro", opts.ExportTemplateMacro) &&
         map.mapOptional("externCMacro", opts.ExternCMacro) &&
-        map.mapOptional("ignoredHeaders", opts.IgnoredHeaders)))
+        map.mapOptional("ignoredHeaders", opts.IgnoredHeaders) &&
+        map.mapOptional("isGeneratingMacro", opts.IsGeneratingMacro) && 
+        map.mapOptional("otherExportMacros", opts.OtherExportMacros)))
     return false;
   
   return true;
+}
+
+Error HeaderGroupOptions::gatherDirectoryFiles(llvm::StringRef rootDirectory, std::vector<std::string> &files) {
+  if (HeaderDirectories.empty())
+    return Error::success();
+
+  HeaderPathMatcher filter;
+
+  if (!IgnoredHeaders.empty()) {
+    auto filterOrErr = HeaderPathMatcher::create(IgnoredHeaders);
+    if (!filterOrErr) {
+      return filterOrErr.takeError();
+    }
+    filter = std::move(filterOrErr.get());
+  }
+
+  llvm::SmallString<256> headerDirectory;
+  for (auto& dirPath : HeaderDirectories) {
+    llvm::sys::path::append(headerDirectory, rootDirectory, dirPath);
+    std::replace(headerDirectory.begin(), headerDirectory.end(), '\\', '/');
+
+    if (auto err = GatherFilesInDirectory(headerDirectory, files, &filter)) {
+      return err;
+    }
+  }
+  return Error::success();
+}
+
+Error BaseExportOptions::gatherFiles(llvm::StringRef rootDirectory, std::vector<std::string> &files) {
+  SmallString<256> pathBuff;
+  for (auto& path : HeaderFiles) {
+    sys::path::append(pathBuff, rootDirectory, path);
+    std::replace(pathBuff.begin(), pathBuff.end(), '\\', '/');
+
+    if (!sys::fs::exists(pathBuff)) {
+      llvm::errs() << "File '" << path << "' in export_options.json headerFiles field does not exist.\n";
+      continue;
+    }
+
+    sys::fs::file_status fileStat;
+    if (std::error_code ec = llvm::sys::fs::status(path, fileStat)) {
+      return createStringError(ec, "Error while accessing file '" + path + "' listed in export_options.json headerFiles.\n");
+    }
+    
+    files.push_back(pathBuff.str().str());
+  }
+
+  return Error::success();
+}
+
+Error ExportOptions::gatherAllFiles(llvm::StringRef rootDirectory, std::vector<std::string> &allFiles, FileOptionLookup& fileOptions) {
+  clang::FileManager *FileMgr =
+    new clang::FileManager(clang::FileSystemOptions(), llvm::vfs::getRealFileSystem());
+
+  llvm::SmallString<256> headerDirectory;
+  std::vector<std::string> files;
+
+  for (HeaderGroupOptions &group : Groups) {
+    files.clear();
+    if (auto err = group.gatherDirectoryFiles(rootDirectory, files)) {
+      return err;
+    }
+
+    for (auto& path : files) {
+      auto fileRef = FileMgr->getFileRef(path);
+      if (!fileRef) 
+        return createStringError("Failed to get FileRef for '" + path + "': " + llvm::toString(fileRef.takeError()));
+
+      fileOptions[fileRef->getUniqueID()] = &group;
+      allFiles.push_back(std::move(path));
+    }
+  }
+
+  // Explicitly specified header files options should override any options from a HeaderDirectory group
+  for (HeaderGroupOptions &group : Groups) {
+    files.clear();
+    group.gatherFiles(rootDirectory, files);
+    for (auto& path : files) {
+      auto fileRef = FileMgr->getFileRef(path);
+      if (!fileRef)
+        return createStringError("Failed to get FileRef for '" + path + "': " + llvm::toString(fileRef.takeError()));
+      fileOptions[fileRef->getUniqueID()] = &group;
+      allFiles.push_back(std::move(path));
+    }
+  }
+
+  return Error::success();
 }

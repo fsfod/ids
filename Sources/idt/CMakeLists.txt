@@ -1,7 +1,8 @@
 add_executable(idt
   idt.cc
   FixItRewriter2.cpp 
-  ExportOptionsConfig.cpp)
+  ExportOptionsConfig.cpp 
+  FindIncludes.cpp)
 
 target_compile_definitions(idt PRIVATE
   ${LLVM_DEFINITIONS})
@@ -15,7 +16,9 @@ target_include_directories(idt PRIVATE
   ${CLANG_INCLUDE_DIRS})
 target_link_libraries(idt PRIVATE
   clangRewriteFrontend
-  clangTooling)
+  clangTooling
+  clangToolingRefactoring)
+
 target_precompile_headers(idt PUBLIC idt_pch.h)
 
 if(MSVC)

@@ -6,28 +6,23 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This is a diagnostic client adaptor that performs rewrites as
+// 
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef EXPORT_OPTIONS_CONFIG_H
 #define EXPORT_OPTIONS_CONFIG_H
 
+#include <llvm/Support/Error.h>
+#include <llvm/ADT/SmallVector.h>
 #include <vector>
 #include <string>
-#include <llvm/Support/Error.h>
-
-enum ExportOptionFlags {
-  ExportOptions_None  = 0,
-  ExportExternC       = 1,
-  ExportSimpleClasses = 2,
-};
 
 struct BaseExportOptions {
   // optional
-  std::vector<std::string> Headers;
+  std::vector<std::string> HeaderFiles;
   std::string MacroHeader;
-  // optional          
+  // optional if a global export macro is defined
   std::string ExportMacro;         
   std::string ClassMacro;          
   // optional
@@ -42,33 +37,37 @@ struct BaseExportOptions {
   std::string IsGeneratingMacro;
   std::vector<std::string> IgnoredHeaders;
   std::vector<std::string> IgnoredClasses;
-  std::vector<std::string> ExtraExportMacros;
+  std::vector<std::string> OtherExportMacros;
   bool ExportExternC;
   bool ExportSimpleClasses;
 
   bool IsRoot;
 
   BaseExportOptions() 
-    : ExportExternC(false), ExportSimpleClasses(false) {
+    : ExportExternC(false), ExportSimpleClasses(false), IsRoot(false) {
   }
+
+  llvm::Error gatherFiles(llvm::StringRef rootDirectory, std::vector<std::string> & files);
 };
 
 struct HeaderGroupOptions : BaseExportOptions {
   // optional
   std::string Name;
-    // HeaderDir or Headers is required
-  std::string HeaderDir; 
-  std::string HeaderDirectory;
-  std::vector<std::string> HeaderFiles;
+  // HeaderDirectories or Headers is required
+  std::vector<std::string> HeaderDirectories;
+  llvm::Error gatherDirectoryFiles(llvm::StringRef rootDirectory, std::vector<std::string> &files);
 };
+
+typedef llvm::DenseMap<llvm::sys::fs::UniqueID, BaseExportOptions*> FileOptionLookup;
 
 class ExportOptions : public BaseExportOptions {
 public:
-  void PropagateDefaults(const std::string &exportMacro = "");
-  static llvm::Error LoadFromFile(llvm::StringRef path, ExportOptions& options);
-  static llvm::Error LoadFromDirectory(const std::string &path, ExportOptions& options);
+  static llvm::Error loadFromFile(llvm::StringRef path, ExportOptions& options);
+  static llvm::Error loadFromDirectory(const std::string &path, ExportOptions& options);
 
-  std::vector<HeaderGroupOptions>& GetGroups() { return Groups; }
+  void setOverridesAndDefaults(const BaseExportOptions &options);
+  llvm::Error gatherAllFiles(llvm::StringRef rootDirectory, std::vector<std::string> &allFiles, FileOptionLookup &fileOptions);
+  std::vector<HeaderGroupOptions>& getGroups() { return Groups; }
 
 private:
   llvm::Error Load(llvm::StringRef text);
