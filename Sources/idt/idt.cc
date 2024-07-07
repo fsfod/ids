@@ -632,6 +632,10 @@ public:
       return true;
     }
 
+    // Exclude class method that will rarely exported
+    if (clang::isa<clang::CXXMethodDecl>(FD))
+      return true;
+
     // If the function has a body, it can be materialized by the user.
     if (FD->isInlined())
       return true;
