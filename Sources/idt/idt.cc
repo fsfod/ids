@@ -67,7 +67,7 @@ namespace {
 llvm::cl::opt<std::string, true>
 export_macro("export-macro",
              llvm::cl::desc("The macro to decorate interfaces with"),
-             llvm::cl::value_desc("define"), llvm::cl::Required,
+             llvm::cl::value_desc("define"), llvm::cl::Optional,
              llvm::cl::cat(idt::category), llvm::cl::location(baseOptions.ExportMacro));
 
 llvm::cl::opt<std::string, true>
