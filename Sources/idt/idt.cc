@@ -5,10 +5,13 @@
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/DiagnosticSema.h"
 #include "clang/Edit/EditsReceiver.h"
+#include "clang/Format/Format.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Lex/PreprocessorOptions.h"
 #include "clang/Rewrite/Frontend/FixItRewriter.h"
+#include "clang/Tooling/Transformer/RewriteRule.h"
+#include "clang/Tooling/Refactoring/AtomicChange.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Tooling.h"
@@ -1011,15 +1014,15 @@ class consumer : public clang::SemaConsumer {
   idt::visitor visitor_;
   ResultCollector &owner;
   fixit_options options_;
+  BaseExportOptions &exportOption;
   std::unique_ptr<clang::FixItRewriter2> rewriter_;
 
 public:
   explicit consumer(clang::ASTContext &context, BaseExportOptions &exportOptions, bool skipFunctionBodies, ResultCollector &owner)
-      : visitor_(context, exportOptions, skipFunctionBodies), owner(owner) {}
-
-
+      : visitor_(context, exportOptions, skipFunctionBodies), owner(owner), exportOption(exportOptions) {}
 
   void HandleTranslationUnit(clang::ASTContext &context) override {
+    using namespace clang::tooling;
     SourceManager& SM = context.getSourceManager();
 
     if (apply_fixits) {
@@ -1037,6 +1040,13 @@ public:
     if (apply_fixits) {
       rewriter_->ProcessRewrites();
 
+      tooling::ApplyChangesSpec spec;
+      auto formatStyle = exportOption.Owner->getClangFormatStyle();
+      if (formatStyle) {
+        spec.Style = *formatStyle;
+        spec.Format = tooling::ApplyChangesSpec::kAll;
+      }
+
       for (auto I = rewriter_->buffer_begin(), 
                 E = rewriter_->buffer_end(); I != E; I++) {
         OptionalFileEntryRef Entry = SM.getFileEntryRefForID(I->first);
@@ -1051,6 +1061,15 @@ public:
           RewriteBuffer &RewriteBuf = I->second;
           RewriteBuf.write(OS);
           OS.flush();
+          if (!exportOption.ExportMacroHeader.empty()) {
+            AtomicChange change(name, "add export header include");
+            change.addHeader(exportOption.ExportMacroHeader);
+            auto result = applyAtomicChanges(name, output, change, spec);
+            if (!result) {
+              llvm::errs() << "Failed to generate header include file change" << llvm::toString(result.takeError());
+            }
+            output = result.get();
+          }
           owner.addResult(name.str().str(), output);
         } else {
           llvm::outs() << "Skipped duplicate write to: " << name << '\n';

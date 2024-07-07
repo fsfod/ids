@@ -4,11 +4,18 @@
 #include "llvm/Support/Path.h"
 #include "ExportOptionsConfig.h"
 #include "FindIncludes.h"
+#include "clang/Format/Format.h"
 
 using namespace llvm::json;
 using namespace llvm;
 
 static bool fromJSON(const json::Value &E, BaseExportOptions &opts, json::Path P);
+
+
+ExportOptions::ExportOptions() 
+ : ClangFormatValid(false) {
+}
+ExportOptions::~ExportOptions() = default;
 
 llvm::Error ExportOptions::loadFromFile(StringRef path, ExportOptions& options) {
 
@@ -17,16 +24,33 @@ llvm::Error ExportOptions::loadFromFile(StringRef path, ExportOptions& options) 
   if (std::error_code ec = bufferOrErr.getError())
     return make_error<StringError>("Error loading export options file:", ec);
 
+  options.RootDirectory = llvm::sys::path::parent_path(path).str();
   return options.Load(bufferOrErr.get()->getBuffer());
 }
 
 Error ExportOptions::loadFromDirectory(const std::string &path, ExportOptions& options) {
   SmallString<256> pathBuf(path);
   sys::path::append(pathBuf, "export_options.json");
+
   if (!sys::fs::is_regular_file(pathBuf)) {
     return createStringError(errc::no_such_file_or_directory, "directory has no export_options.json");
   }
   return loadFromFile(pathBuf, options);
+}
+
+clang::format::FormatStyle* ExportOptions::getClangFormatStyle() {
+ return ClangFormatValid ? &ClangFormatStyle : NULL;
+}
+
+std::error_code loadAndParseConfigFile(StringRef ConfigFile, clang::format::FormatStyle *Style) {
+  auto Text =
+    llvm::vfs::getRealFileSystem().get()->getBufferForFile(ConfigFile.str());
+  if (auto EC = Text.getError())
+    return EC;
+  if (auto EC = clang::format::parseConfiguration(*Text.get(), Style)) {
+    return EC;
+  }
+  return std::error_code();
 }
 
 Error ExportOptions::Load(StringRef text) {
@@ -56,8 +80,26 @@ Error ExportOptions::Load(StringRef text) {
   if (!fromJSON(*Val, *this, RootPath)) 
     return RootPath.getError();
 
-  if (!Mapper.mapOptional("groups", Groups))
+  if (!(Mapper.mapOptional("groups", Groups) &&
+        Mapper.mapOptional("clangFormatFile", ClangFormatFile)))
     return RootPath.getError();
+
+  // Just set this so code can simpler and not worry if there exports options is from a group or not
+  Owner = this;
+  for (auto& group : Groups) {
+    group.Owner = this;
+  }
+
+  if (!ClangFormatFile.empty()) {
+    SmallString<256> path(ClangFormatFile);
+    sys::fs::make_absolute(RootDirectory, path);
+    ClangFormatStyle = clang::format::getNoStyle();
+    auto err = loadAndParseConfigFile(path, &ClangFormatStyle);
+    if (err) {
+      return createStringError(err, "bad .clang_format file specified in export_options.json");
+    }
+    ClangFormatValid = true;
+  }
 
   return Error::success();
 }
@@ -96,6 +138,7 @@ void ExportOptions::setOverridesAndDefaults(const BaseExportOptions &options) {
     setDefault(group.ExportTemplateMacro, ExportTemplateMacro);
     setDefault(group.ExternTemplateMacro, ExternTemplateMacro);
     setDefault(group.ExternCMacro, ExternCMacro);
+    setDefault(group.ExportMacroHeader, ExportMacroHeader);
     setDefault(group.IsGeneratingMacro, IsGeneratingMacro);
 
     group.OtherExportMacros.insert(group.OtherExportMacros.end(), OtherExportMacros.begin(), OtherExportMacros.end());
@@ -148,7 +191,9 @@ bool fromJSON(const json::Value &E, BaseExportOptions &opts, json::Path P) {
         map.mapOptional("externCMacro", opts.ExternCMacro) &&
         map.mapOptional("ignoredHeaders", opts.IgnoredHeaders) &&
         map.mapOptional("isGeneratingMacro", opts.IsGeneratingMacro) && 
-        map.mapOptional("otherExportMacros", opts.OtherExportMacros)))
+        map.mapOptional("otherExportMacros", opts.OtherExportMacros) &&
+        map.mapOptional("exportMacroHeader", opts.ExportMacroHeader) &&
+        map.mapOptional("disabled", opts.Disabled)))
     return false;
   
   return true;
@@ -210,6 +255,9 @@ Error ExportOptions::gatherAllFiles(llvm::StringRef rootDirectory, std::vector<s
   std::vector<std::string> files;
 
   for (HeaderGroupOptions &group : Groups) {
+    if (group.Disabled)
+      continue;
+
     files.clear();
     if (auto err = group.gatherDirectoryFiles(rootDirectory, files)) {
       return err;
@@ -227,6 +275,9 @@ Error ExportOptions::gatherAllFiles(llvm::StringRef rootDirectory, std::vector<s
 
   // Explicitly specified header files options should override any options from a HeaderDirectory group
   for (HeaderGroupOptions &group : Groups) {
+    if (group.Disabled)
+      continue;
+
     files.clear();
     group.gatherFiles(rootDirectory, files);
     for (auto& path : files) {

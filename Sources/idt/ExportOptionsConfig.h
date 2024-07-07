@@ -15,13 +15,17 @@
 
 #include <llvm/Support/Error.h>
 #include <llvm/ADT/SmallVector.h>
+#include <clang/Format/Format.h>
 #include <vector>
 #include <string>
 
+class ExportOptions;
+
 struct BaseExportOptions {
+  ExportOptions *Owner;
   // optional
   std::vector<std::string> HeaderFiles;
-  std::string MacroHeader;
+  std::string ExportMacroHeader;
   // optional if a global export macro is defined
   std::string ExportMacro;         
   std::string ClassMacro;          
@@ -40,11 +44,11 @@ struct BaseExportOptions {
   std::vector<std::string> OtherExportMacros;
   bool ExportExternC;
   bool ExportSimpleClasses;
-
+  bool Disabled;
   bool IsRoot;
 
   BaseExportOptions() 
-    : ExportExternC(false), ExportSimpleClasses(false), IsRoot(false) {
+    : ExportExternC(false), ExportSimpleClasses(false), IsRoot(false), Disabled(false) {
   }
 
   llvm::Error gatherFiles(llvm::StringRef rootDirectory, std::vector<std::string> & files);
@@ -60,8 +64,16 @@ struct HeaderGroupOptions : BaseExportOptions {
 
 typedef llvm::DenseMap<llvm::sys::fs::UniqueID, BaseExportOptions*> FileOptionLookup;
 
-class ExportOptions : public BaseExportOptions {
+struct RootExportOptions : BaseExportOptions {
+  std::string ClangFormatFile;
+  std::vector<HeaderGroupOptions> Groups;
+};
+
+class ExportOptions : public RootExportOptions {
 public:
+  ExportOptions();
+  ~ExportOptions();
+
   static llvm::Error loadFromFile(llvm::StringRef path, ExportOptions& options);
   static llvm::Error loadFromDirectory(const std::string &path, ExportOptions& options);
 
@@ -69,9 +81,22 @@ public:
   llvm::Error gatherAllFiles(llvm::StringRef rootDirectory, std::vector<std::string> &allFiles, FileOptionLookup &fileOptions);
   std::vector<HeaderGroupOptions>& getGroups() { return Groups; }
 
+  HeaderGroupOptions *getGroup(llvm::StringRef name) {
+	for (auto& group : Groups) {
+	  if (name.compare_insensitive(group.Name) == 0)
+		return &group;
+	}
+	return nullptr;
+  }
+
+  clang::format::FormatStyle* getClangFormatStyle();
+
+  const std::string &getRootDirectory() { return RootDirectory; }
 private:
   llvm::Error Load(llvm::StringRef text);
-  std::vector<HeaderGroupOptions> Groups;
+  std::string RootDirectory;
+  bool ClangFormatValid;
+  clang::format::FormatStyle ClangFormatStyle;
 };
 
 #endif
