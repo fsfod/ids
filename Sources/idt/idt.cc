@@ -285,28 +285,20 @@ public:
     if (isAlreadyExported(D, true))
       return true;
 
-    for (const clang::CXXMethodDecl* MD : D->methods()) {
-      if (MD->isImplicit() || MD->isDeleted() || MD->isDefaulted() || MD->isPureVirtual())
-        continue;
+    llvm::SmallVector<clang::Decl*> unexported;
+    auto status = GetUnexportedMembers(D, unexported);
 
-      if (!MD->hasBody()) {
-        const clang::FunctionDecl* def = MD->getDefinition();
-        if (MD->isInlined() || (def && def->isInlined())) {
-          continue;
+    bool requiresExport = status != UnexportedStatus::None || D->isAbstract();
+
+    if (status == UnexportedStatus::Partial) {
+      for (clang::Decl* member : unexported) {
+        if (auto *F = clang::dyn_cast<clang::FunctionDecl>(member)) {
+          ExportFunction(F);
+        } else {
+          ExportVariable(clang::dyn_cast<clang::VarDecl>(member));
         }
-        if (isAlreadyExported(MD, false))
-          continue;
-        outOfLineMembers = true;
-        break;
       }
     }
-
-    auto *unexportedStatic = FirstUnexportedStaticField(D);
-    if (debuglog && unexportedStatic) {
-      llvm::outs() << "Found unexported class " << D->getName() << " with static field " << unexportedStatic->getName() << "\n";
-    }
-
-    bool requiresExport = outOfLineMembers || unexportedStatic != NULL || D->isAbstract();
 
     // Don't add DLL export to PoD structs that also have no methods
     if (skip_simple_classes && !requiresExport) {
@@ -838,6 +830,51 @@ public:
         return VD;
     }
     return NULL;
+  }
+
+  enum class UnexportedStatus {
+    None = 0,
+    Partial,
+    All,
+  };
+
+  UnexportedStatus GetUnexportedMembers(clang::CXXRecordDecl *D, llvm::SmallVector<clang::Decl*> &unexportedMembers) {
+    bool partialExports = false;;
+    for (clang::Decl* FD : D->decls()) {
+      VarDecl *VD = clang::dyn_cast<clang::VarDecl>(FD);
+
+      if (isAlreadyExported(D, false)) {
+        partialExports = true;
+        continue;
+      }
+
+      if (VD) {
+        if (VD->isStaticDataMember() && !VD->hasInit()) {
+          unexportedMembers.push_back(D);
+        }
+      }
+
+      const clang::CXXMethodDecl* MD = clang::dyn_cast<clang::CXXMethodDecl>(FD);
+      if(MD) {
+        if (MD->isImplicit() || MD->isDeleted() || MD->isDefaulted() || MD->isPureVirtual())
+          continue;
+
+        if (MD->hasBody())
+          continue;
+
+        const clang::FunctionDecl *def = MD->getDefinition();
+        if (MD->isInlined() || (def && def->isInlined())) {
+          continue;
+        }
+
+        unexportedMembers.push_back(D);
+      }
+    }
+
+    if (unexportedMembers.empty())
+      return UnexportedStatus::None;
+    else
+      return partialExports ? UnexportedStatus::Partial : UnexportedStatus::All;
   }
 
   bool isAlreadyExported(const clang::Decl *D, bool ignoreInherited) {
