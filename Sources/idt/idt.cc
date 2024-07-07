@@ -319,11 +319,6 @@ public:
       }
     }
 
-    auto templClass = D->getDescribedClassTemplate();
-    if (templClass) {
-      return true;
-    }
-
     if (CTSD) {
       if (debuglog) {
         llvm::outs() << "TemplateDecl: " << CTSD->getNameAsString() << ", Body: " << CTSD->hasBody()
