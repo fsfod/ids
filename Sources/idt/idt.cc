@@ -368,7 +368,11 @@ public:
     if (ShouldSkipDeclaration(D, true))
       return true;
 
-    clang::VarDecl *unexportedStatic = FirstUnexportedStaticField(D->getTemplatedDecl());
+    clang::CXXRecordDecl *CRD = D->getTemplatedDecl();
+    if (isAlreadyExported(CRD, true))
+      return true;
+
+    clang::VarDecl *unexportedStatic = FirstUnexportedStaticField(CRD);
 
     if (!unexportedStatic)
       return true;
