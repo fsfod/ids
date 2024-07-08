@@ -215,6 +215,7 @@ Error HeaderGroupOptions::gatherDirectoryFiles(llvm::StringRef rootDirectory, st
 
   llvm::SmallString<256> headerDirectory;
   for (auto& dirPath : HeaderDirectories) {
+    headerDirectory.clear();
     llvm::sys::path::append(headerDirectory, rootDirectory, dirPath);
     std::replace(headerDirectory.begin(), headerDirectory.end(), '\\', '/');
 
@@ -228,6 +229,7 @@ Error HeaderGroupOptions::gatherDirectoryFiles(llvm::StringRef rootDirectory, st
 Error BaseExportOptions::gatherFiles(llvm::StringRef rootDirectory, std::vector<std::string> &files) {
   SmallString<256> pathBuff;
   for (auto& path : HeaderFiles) {
+    pathBuff.clear();
     sys::path::append(pathBuff, rootDirectory, path);
     std::replace(pathBuff.begin(), pathBuff.end(), '\\', '/');
 
@@ -237,7 +239,7 @@ Error BaseExportOptions::gatherFiles(llvm::StringRef rootDirectory, std::vector<
     }
 
     sys::fs::file_status fileStat;
-    if (std::error_code ec = llvm::sys::fs::status(path, fileStat)) {
+    if (std::error_code ec = llvm::sys::fs::status(pathBuff, fileStat)) {
       return createStringError(ec, "Error while accessing file '" + path + "' listed in export_options.json headerFiles.\n");
     }
     
