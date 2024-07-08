@@ -889,15 +889,6 @@ public:
     for (auto *Atrr : D->attrs()) {
 
       if (auto *annotation = clang::dyn_cast<AnnotateAttr>(Atrr)) {
-        if (annotation->getAnnotation() == "idt_export") {
-          if (debuglog) {
-            llvm::StringRef name = D->getDeclKindName();
-            llvm::outs() << "Skipped '" << name << "' that already has export macro\n";
-          }
-          return true;
-        }
-      } else if (clang::isa<DLLExportAttr>(Atrr) || clang::isa<DLLImportAttr>(Atrr) ||
-                 clang::isa<VisibilityAttr>(Atrr)) {
         if (Atrr->isInherited() && ignoreInherited) {
           if (debuglog) {
             llvm::StringRef name = D->getDeclKindName();
@@ -908,6 +899,15 @@ public:
           continue;
         }
 
+        if (annotation->getAnnotation() == "idt_export") {
+          if (debuglog) {
+            llvm::StringRef name = D->getDeclKindName();
+            llvm::outs() << "Skipped '" << name << "' that already has export macro\n";
+          }
+          return true;
+        }
+      } else if (clang::isa<DLLExportAttr>(Atrr) || clang::isa<DLLImportAttr>(Atrr) ||
+                 clang::isa<VisibilityAttr>(Atrr)) {
         auto range = D->getSourceRange();
         clang::FullSourceLoc location = context_.getFullLoc(Atrr->getLocation()).getExpansionLoc();
         // The source range we get for functions and variables starts after there attributes
