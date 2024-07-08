@@ -783,10 +783,12 @@ public:
     if (defOrDecl->isInlined())
       return true;
 
-    if (FD->getTemplateSpecializationKind() == TSK_ExplicitInstantiationDeclaration)
+    auto TSK = FD->getTemplateSpecializationKind();
+    if (TSK == TSK_ExplicitInstantiationDeclaration)
       return true;
 
-    if (FD->isCXXClassMember())
+    // Allow explicitly specialized class member functions declared out of line
+    if (FD->isCXXClassMember() && TSK != TSK_ExplicitSpecialization)
       return true;
 
     if (isAlreadyExported(FD, true))
