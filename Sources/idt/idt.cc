@@ -851,14 +851,14 @@ public:
     for (clang::Decl* FD : D->decls()) {
       VarDecl *VD = clang::dyn_cast<clang::VarDecl>(FD);
 
-      if (isAlreadyExported(D, false)) {
+      if (isAlreadyExported(FD, false)) {
         partialExports = true;
         continue;
       }
 
       if (VD) {
         if (VD->isStaticDataMember() && !VD->hasInit()) {
-          unexportedMembers.push_back(D);
+          unexportedMembers.push_back(FD);
         }
       }
 
@@ -875,7 +875,7 @@ public:
           continue;
         }
 
-        unexportedMembers.push_back(D);
+        unexportedMembers.push_back(FD);
       }
     }
 
