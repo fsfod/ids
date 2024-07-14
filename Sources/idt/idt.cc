@@ -277,7 +277,6 @@ public:
     // Skip non templated class/structs in a templated type
     if (D->isDependentContext())
       return true;
-    bool outOfLineMembers = false;
 
     auto *CTSD = clang::dyn_cast<clang::ClassTemplateSpecializationDecl>(D);
     // Process extern template declarations separately when we visit them directly
@@ -293,7 +292,7 @@ public:
 
     bool requiresExport = status != UnexportedStatus::None || D->isAbstract();
 
-    if (status == UnexportedStatus::Partial) {
+    if (status == UnexportedStatus::Partial || (options.ExportMembers && status == UnexportedStatus::All)) {
       for (clang::Decl* member : unexported) {
         if (auto *F = clang::dyn_cast<clang::FunctionDecl>(member)) {
           ExportFunction(F);
@@ -301,6 +300,7 @@ public:
           ExportVariable(clang::dyn_cast<clang::VarDecl>(member));
         }
       }
+      return true;
     }
 
     // Don't add DLL export to PoD structs that also have no methods

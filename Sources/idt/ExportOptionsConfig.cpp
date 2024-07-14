@@ -193,7 +193,8 @@ bool fromJSON(const json::Value &E, BaseExportOptions &opts, json::Path P) {
         map.mapOptional("isGeneratingMacro", opts.IsGeneratingMacro) && 
         map.mapOptional("otherExportMacros", opts.OtherExportMacros) &&
         map.mapOptional("exportMacroHeader", opts.ExportMacroHeader) &&
-        map.mapOptional("disabled", opts.Disabled)))
+        map.mapOptional("disabled", opts.Disabled) &&
+        map.mapOptional("exportMembers", opts.ExportMembers)))
     return false;
   
   return true;
