@@ -46,9 +46,10 @@ struct BaseExportOptions {
   bool ExportSimpleClasses;
   bool Disabled;
   bool IsRoot;
+  bool ExportTemplates;
 
   BaseExportOptions() 
-    : ExportExternC(false), ExportSimpleClasses(false), IsRoot(false), Disabled(false) {
+    : ExportExternC(false), ExportSimpleClasses(false), IsRoot(false), Disabled(false), ExportTemplates(false){
   }
 
   llvm::Error gatherFiles(llvm::StringRef rootDirectory, std::vector<std::string> & files);
@@ -82,11 +83,11 @@ public:
   std::vector<HeaderGroupOptions>& getGroups() { return Groups; }
 
   HeaderGroupOptions *getGroup(llvm::StringRef name) {
-	for (auto& group : Groups) {
-	  if (name.compare_insensitive(group.Name) == 0)
-		return &group;
-	}
-	return nullptr;
+  for (auto& group : Groups) {
+    if (name.compare_insensitive(group.Name) == 0)
+    return &group;
+  }
+  return nullptr;
   }
 
   clang::format::FormatStyle* getClangFormatStyle();

@@ -360,6 +360,9 @@ public:
   }
 
   bool VisitClassTemplateDecl(clang::ClassTemplateDecl *D) {
+    if (!options.ExportTemplates)
+      return true;
+
     if (ShouldSkipDeclaration(D, true))
       return true;
 
