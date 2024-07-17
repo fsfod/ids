@@ -109,38 +109,42 @@ void setOverride(std::string& value, const std::string& override) {
     value = override;
 }
 
+void setOverride(std::optional<bool> &value, const std::optional<bool> & override) {
+  if (override.has_value())
+    value = override;
+}
+
 void setDefault(std::string& value, const std::string &defaultValue) {
   if (value.empty())
     value = defaultValue;
 }
 
+void setDefault(std::optional<bool> &value, const std::optional<bool> &defaultValue) {
+  if (!value.has_value() && defaultValue.has_value()) {
+    value = defaultValue;
+  } else if (!value.has_value()) {
+    value = false;
+  }
+}
+
+#define SET_OPTION_DEFAULT(fieldName, optName) \
+  setDefault(group.fieldName, fieldName);
+
+#define SET_OPTION_OVERRIDE(fieldName, optName) \
+  setOverride(fieldName, options.fieldName);
+
 void ExportOptions::setOverridesAndDefaults(const BaseExportOptions &options) {
 
-  setOverride(ExportMacro, options.ExportMacro);
-  setOverride(ClassMacro, options.ClassMacro);
-  setOverride(ExternCMacro, options.ExternCMacro);
-  setOverride(ExportTemplateMacro, options.ExportTemplateMacro);
-  setOverride(ExternTemplateMacro, options.ExternTemplateMacro);
-  setOverride(ExportMacro, options.ExportMacro);
-  setOverride(IsGeneratingMacro, options.IsGeneratingMacro);
+  OVERRIDABLE_OPTIONS_LIST(SET_OPTION_OVERRIDE);
+
+  if (!Disabled.has_value()) {
+    Disabled = false;
+  }
  
   OtherExportMacros.insert(OtherExportMacros.end(), options.OtherExportMacros.begin(), options.OtherExportMacros.end());
 
-  if (options.ExportExternC)
-    ExportExternC = true;
-
-  if (options.ExportSimpleClasses)
-    ExportSimpleClasses = true;
-
   for (auto &group : Groups) {
-    setDefault(group.ExportMacro, ExportMacro);
-    setDefault(group.ClassMacro, ClassMacro);
-    setDefault(group.ExportTemplateMacro, ExportTemplateMacro);
-    setDefault(group.ExternTemplateMacro, ExternTemplateMacro);
-    setDefault(group.ExternCMacro, ExternCMacro);
-    setDefault(group.ExportMacroHeader, ExportMacroHeader);
-    setDefault(group.IsGeneratingMacro, IsGeneratingMacro);
-
+    OVERRIDABLE_OPTIONS_LIST(SET_OPTION_DEFAULT);
     group.OtherExportMacros.insert(group.OtherExportMacros.end(), OtherExportMacros.begin(), OtherExportMacros.end());
   }
 }
@@ -174,29 +178,22 @@ template<typename T> bool MapEnumFlag(ObjectMapper &map, StringLiteral prop, T &
   return true;
 }
 
+#define READ_OPTION_ENTRY(fieldName, optName) \
+  map.mapOptional(#optName, opts.fieldName) &&
+
+#define READ_ALL_OPTIONAL_VALUES() (EXPORT_OPTION_LIST(READ_OPTION_ENTRY) true)
+
 bool fromJSON(const json::Value &E, BaseExportOptions &opts, json::Path P) {
   ObjectMapper map(E, P);
 
-  if(!map.mapOptional("exportSimpleClasses", opts.ExportSimpleClasses))
+  bool valid = READ_ALL_OPTIONAL_VALUES();
+  if (!valid)
     return false;
 
-  if(!map.mapOptional("exportExternC", opts.ExportExternC))
-    return false;
-
-  if (!(map.mapOptional("headerFiles", opts.HeaderFiles) && 
-        map.mapOptional("exportMacro", opts.ExportMacro) &&
-        map.mapOptional("classMacro", opts.ClassMacro) &&
-        map.mapOptional("externTemplateMacro", opts.ExternTemplateMacro) &&
-        map.mapOptional("exportTemplateMacro", opts.ExportTemplateMacro) &&
-        map.mapOptional("externCMacro", opts.ExternCMacro) &&
-        map.mapOptional("ignoredHeaders", opts.IgnoredHeaders) &&
-        map.mapOptional("isGeneratingMacro", opts.IsGeneratingMacro) && 
-        map.mapOptional("otherExportMacros", opts.OtherExportMacros) &&
-        map.mapOptional("exportMacroHeader", opts.ExportMacroHeader) &&
-        map.mapOptional("disabled", opts.Disabled) &&
-        map.mapOptional("exportMembers", opts.ExportMembers)))
-    return false;
-  
+  // Default to adding include of export header if specified, child groups can then disable it if needed
+  if (!opts.ExportMacroHeader.empty() && !opts.AddExportHeaderInclude.has_value()) {
+    opts.AddExportHeaderInclude = true;
+  }
   return true;
 }
 
@@ -282,7 +279,10 @@ Error ExportOptions::gatherAllFiles(llvm::StringRef rootDirectory, std::vector<s
       continue;
 
     files.clear();
-    group.gatherFiles(rootDirectory, files);
+    Error err = group.gatherFiles(rootDirectory, files);
+    if (err)
+      return err;
+
     for (auto& path : files) {
       auto fileRef = FileMgr->getFileRef(path);
       if (!fileRef)

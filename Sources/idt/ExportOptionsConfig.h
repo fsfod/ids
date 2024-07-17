@@ -21,6 +21,47 @@
 
 class ExportOptions;
 
+#define OVERRIDABLE_OPTION_FLAGS(_)                                            \
+  _(Disabled, disabled)                                                        \
+  _(ExportExternC, exportExternC)                                              \
+  _(ExportSimpleClasses, exportSimpleClasses)                                  \
+  _(IsGeneratingMacro, isGeneratingMacro)                                      \
+  _(ExportMacroHeader, exportMacroHeader)                                      \
+  _(ExportMembers, exportMembers)
+
+#define OVERRIDABLE_OPTION_STRINGS(_)                                            \
+  _(IsGeneratingMacro, isGeneratingMacro)                                      \
+  _(ExportMacro, exportMacro)                                                  \
+  _(ClassMacro, classMacro)                                                    \
+  _(ExternTemplateMacro, externTemplateMacro)                                  \
+  _(ExportTemplateMacro, exportTemplateMacro)                                  \
+  _(ExternCMacro, externCMacro)                                                \
+  _(ExportMacroHeader, exportMacroHeader)                                      \
+
+#define OVERRIDABLE_OPTIONS_LIST(_)                                            \
+  OVERRIDABLE_OPTION_STRINGS(_)                                                \
+  OVERRIDABLE_OPTION_FLAGS(_)
+
+#define EXPORT_OPTION_LIST(_)                                                  \
+  _(HeaderFiles, headerFiles)                                                  \
+  _(IgnoredHeaders, ignoredHeaders)                                            \
+  _(OtherExportMacros, otherExportMacros)                                      \
+  OVERRIDABLE_OPTIONS_LIST(_)
+
+// Make optional<bool> less error prone by making its behavior as a boolean value in conditions
+// use the value() instead of has_value()
+class BoolOption : public std::optional<bool> {
+public:
+  constexpr explicit operator bool() const noexcept {
+    return has_value() && value();
+  }
+
+  BoolOption &operator=(const bool &value) {
+    emplace(value);
+    return *this;
+  }
+};
+
 struct BaseExportOptions {
   ExportOptions *Owner;
   // optional
@@ -42,15 +83,15 @@ struct BaseExportOptions {
   std::vector<std::string> IgnoredHeaders;
   std::vector<std::string> IgnoredClasses;
   std::vector<std::string> OtherExportMacros;
-  bool ExportExternC;
-  bool ExportSimpleClasses;
-  bool Disabled;
-  bool IsRoot;
-  bool ExportTemplates;
-  bool ExportMembers;
+  BoolOption ExportExternC;
+  BoolOption ExportSimpleClasses;
+  BoolOption Disabled;
+  BoolOption IsRoot;
+  BoolOption ExportTemplates;
+  BoolOption ExportMembers;
+  BoolOption AddExportHeaderInclude;
 
-  BaseExportOptions() 
-    : ExportExternC(false), ExportSimpleClasses(false), IsRoot(false), Disabled(false), ExportTemplates(false){
+  BaseExportOptions() {
   }
 
   llvm::Error gatherFiles(llvm::StringRef rootDirectory, std::vector<std::string> & files);
