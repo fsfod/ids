@@ -408,6 +408,41 @@ public:
       }
     }
 
+    // If were parsing with clang __declspec can't go before some attributes
+    if (D->hasAttrs()) {
+      auto maxStart = source_manager_.getLocForEndOfFile(source_manager_.getFileID(location));
+      clang::SourceLocation attrStart = maxStart;
+      clang::Attr *firstAttr;
+
+      for (auto *Atrr : D->attrs()) {
+        if (Atrr->isInherited() || Atrr->isDeclspecAttribute())
+          continue;
+
+        if (!Atrr->isGNUAttribute() && !Atrr->isCXX11Attribute())
+          continue;
+        clang::SourceRange range = Atrr->getRange();
+
+        auto start = GetFullExpansionLoc(range.getBegin());
+        if (start < attrStart) {
+          attrStart = start;
+          firstAttr = Atrr;
+        }
+      }
+
+      if (attrStart != maxStart) {
+        // If the attribute is expanded from macro location won't be offset to attribute name
+        if (firstAttr->getLoc().isMacroID()) {
+          insertion_point = attrStart;
+        } else if (firstAttr->isGNUAttribute()) {
+          // __attribute__((
+          insertion_point = attrStart.getLocWithOffset(-15);
+        } else {
+          // [[
+          insertion_point = attrStart.getLocWithOffset(-2);
+        }
+      }
+    }
+
     if (insertion_point.isMacroID()) {
       if (debuglog) {
         LogSkippedDecl(D, location, "' macro insertion point was inside another macro");
