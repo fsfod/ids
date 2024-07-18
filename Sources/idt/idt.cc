@@ -463,10 +463,21 @@ public:
       exportMacro = options.ExportMacro;
     }
 
+    bool hasAttributes = false;
+    for (auto *Atrr : D->attrs()) {
+      if (Atrr->isInherited() || Atrr->isDeclspecAttribute())
+        continue;
+
+      if (Atrr->isGNUAttribute() || Atrr->isCXX11Attribute()) {
+        hasAttributes = true;
+        break;
+      }      
+    }
+
     clang::SourceLocation insertion_point = insertion_point = D->getBeginLoc();
     if (D->getTemplatedKind() != clang::FunctionDecl::TK_NonTemplate) {
       insertion_point = D->getInnerLocStart();
-    } else if (func_macro_on_name) {
+    } else if (func_macro_on_name || hasAttributes) {
       auto *nestedName = D->getQualifier();
       // Check if the function name is prefixed with a type or namespace 
       if (nestedName) {
