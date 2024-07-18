@@ -156,6 +156,12 @@ func_macro_on_name("function-macro-on-name", llvm::cl::init(false),
   llvm::cl::desc("Change the attach point for function export macros to next to there name"),
   llvm::cl::cat(idt::category));
 
+llvm::cl::opt<int> thread_parallelism("threads", llvm::cl::init(0),
+  llvm::cl::desc("Number of threads to use to process headers and source files"),
+  llvm::cl::cat(idt::category));
+
+llvm::cl::alias threadsJ("j", llvm::cl::desc("Alias for -threads"), llvm::cl::aliasopt(thread_parallelism));
+
 template <typename Key, typename Compare, typename Allocator>
 bool contains(const std::set<Key, Compare, Allocator>& set, const Key& key) {
   return set.find(key) != set.end();
@@ -1288,9 +1294,7 @@ int main(int argc, char *argv[]) {
 
   int result;
   idt::factory factory(&fileOptions);
-  //result = tool->run(&factory); parallel
-
-  llvm::Error err = runClangToolMultithreaded(*InferedDB.get(), factory, sourcePathList);
+  llvm::Error err = runClangToolMultithreaded(*InferedDB.get(), factory, sourcePathList, thread_parallelism);
 
   if (err) {
     llvm::errs() << "Running ASTAction failed:" << err;
