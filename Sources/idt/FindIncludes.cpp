@@ -228,7 +228,9 @@ Error getRootHeaders(tooling::CommonOptionsParser &options, std::vector<std::str
   ClangTool tool2(options.getCompilations(), files);
   tool2.run(factory.get());
 
-  runClangToolMultithreaded(options.getCompilations(), *factory.get(), files, - 1);
+  Error err = runClangToolMultithreaded(options.getCompilations(), *factory.get(), files, - 1);
+  if (err)
+    return err;
 
   llvm::StringSet<> nonroots;
   for (auto &header : factory->headerIncludes) {
