@@ -190,6 +190,9 @@ Error runClangToolMultithreaded(CompilationDatabase &Compilations, FrontendActio
     for (std::string File : Files) {
       Pool.async(
         [&](std::string Path) {
+        if (!ErrorMsg.empty()) {
+          return;
+        }
         Log("[" + std::to_string(Count()) + "/" + TotalNumStr +
           "] Processing file " + Path);
         // Each thread gets an independent copy of a VFS to allow different
