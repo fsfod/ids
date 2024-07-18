@@ -1069,7 +1069,7 @@ public:
           RewriteBuffer &RewriteBuf = I->second;
           RewriteBuf.write(OS);
           OS.flush();
-          if (!exportOption.ExportMacroHeader.empty()) {
+          if (exportOption.AddExportHeaderInclude && !exportOption.ExportMacroHeader.empty()) {
             AtomicChange change(name, "add export header include");
             change.addHeader(exportOption.ExportMacroHeader);
             auto result = applyAtomicChanges(name, output, change, spec);

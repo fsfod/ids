@@ -27,7 +27,8 @@ class ExportOptions;
   _(ExportSimpleClasses, exportSimpleClasses)                                  \
   _(IsGeneratingMacro, isGeneratingMacro)                                      \
   _(ExportMacroHeader, exportMacroHeader)                                      \
-  _(ExportMembers, exportMembers)
+  _(ExportMembers, exportMembers) \
+  _(AddExportHeaderInclude, addExportHeaderInclude)
 
 #define OVERRIDABLE_OPTION_STRINGS(_)                                            \
   _(IsGeneratingMacro, isGeneratingMacro)                                      \
