@@ -114,7 +114,7 @@ mainfileonly("mainfileonly", llvm::cl::init(false),
   llvm::cl::cat(idt::category));
 
 llvm::cl::opt<std::string>
-root_header_directory("headerdir",
+root_header_directory("header-dir",
   llvm::cl::desc("Directory to recursively search for headers to rewrite"),
   llvm::cl::value_desc("define"),
   llvm::cl::cat(idt::category));
