@@ -41,7 +41,7 @@ public:
     : FileExportOptions(nullptr), DefaultExportOptions(exportOptions) {
   }
 
-  BaseExportOptions *getFileExportOptions(FileEntryRef file) {
+  BaseExportOptions *getFileExportOptions(clang::FileEntryRef file) {
     if (!FileExportOptions) {
       return DefaultExportOptions;
     }
@@ -286,7 +286,7 @@ public:
 
     auto *CTSD = clang::dyn_cast<clang::ClassTemplateSpecializationDecl>(D);
     // Process extern template declarations separately when we visit them directly
-    if (CTSD && CTSD->getTemplateSpecializationKind() == TSK_ExplicitInstantiationDeclaration) {
+    if (CTSD && CTSD->getTemplateSpecializationKind() == clang::TSK_ExplicitInstantiationDeclaration) {
       return true;
     }
 
@@ -316,7 +316,7 @@ public:
     }
 
     // Check if this ia nested class or struct
-    if (const RecordDecl *PD = dyn_cast<clang::RecordDecl>(parent)) {
+    if (const clang::RecordDecl *PD = clang::dyn_cast<clang::RecordDecl>(parent)) {
       assert(PD->isClass() || PD->isStruct() || PD->isUnion());
 
       // Skip nested class and structs that have no methods or there all declared inside the declaration
@@ -333,7 +333,7 @@ public:
       }
 
       // We only want export full class specialization
-      if (llvm::isa<ClassTemplatePartialSpecializationDecl>(CTSD))
+      if (llvm::isa<clang::ClassTemplatePartialSpecializationDecl>(CTSD))
         return true;
 
       // Skip nested classes
@@ -398,7 +398,7 @@ public:
 
     clang::SourceLocation insertion_point = D->getLocation();
 
-    if (auto *TD = dyn_cast<clang::TagDecl>(D)) {
+    if (auto *TD = clang::dyn_cast<clang::TagDecl>(D)) {
       auto *nestedName = TD->getQualifier();
       // Check if the class name is prefixed with a type or namespace 
       if (nestedName) {
@@ -514,7 +514,7 @@ public:
     const auto filename = location.getFileEntryRef()->getName();
     int line = location.getLineNumber();
 
-    if (D->getTemplateSpecializationKind() != TSK_ExplicitInstantiationDeclaration)
+    if (D->getTemplateSpecializationKind() != clang::TSK_ExplicitInstantiationDeclaration)
       return true;
 
     if (ShouldSkipDeclaration(D))
@@ -607,10 +607,10 @@ public:
     if (VD->isInAnonymousNamespace())
       return true;
 
-    QualType type = VD->getType();
+    clang::QualType type = VD->getType();
 
     if (!VD->hasExternalStorage()) {
-      if (!VD->hasGlobalStorage() || type.isConstQualified() || VD->getStorageClass() == SC_Static)
+      if (!VD->hasGlobalStorage() || type.isConstQualified() || VD->getStorageClass() == clang::SC_Static)
         return true;
       // Only annotate global variable definitions in source files not headers
       if (isMainFileAHeader) {
@@ -678,7 +678,7 @@ public:
     auto tkind = FD->getTemplatedKind();
     // TODO: Is there any non dependent function templates that would be valid to 
     // add dllexport to that we would that see here.
-    if (tkind != FunctionDecl::TK_NonTemplate) {
+    if (tkind != clang::FunctionDecl::TK_NonTemplate) {
       return true;
     }
 
@@ -741,9 +741,9 @@ public:
     for (auto *FD : D->specializations()) {
       for (auto *RD : FD->redecls()) {
         auto specKind = RD->getTemplateSpecializationKind();
-        if (specKind == TSK_ExplicitInstantiationDeclaration) {
+        if (specKind == clang::TSK_ExplicitInstantiationDeclaration) {
           VisitExternFunctionTemplate(RD);
-        } else if (specKind == TSK_ExplicitInstantiationDefinition && isInsideMainFile(RD->getPointOfInstantiation())){
+        } else if (specKind == clang::TSK_ExplicitInstantiationDefinition && isInsideMainFile(RD->getPointOfInstantiation())){
           continue;
         }
       }
@@ -784,7 +784,7 @@ public:
   bool VisitCXXMethodDecl(clang::CXXMethodDecl * D) {
     auto spec = D->getTemplateSpecializationKind();
     // Were looking for explicit specialization member functions
-    if (spec != TSK_ExplicitSpecialization)
+    if (spec != clang::TSK_ExplicitSpecialization)
       return true;
 
     auto fileLoc = GetFileLocation(D->getInnerLocStart());
@@ -798,7 +798,7 @@ public:
     if (ShouldSkipDeclaration(D))
       return true;
     
-    MemberSpecializationInfo *Info = D->getMemberSpecializationInfo();
+    clang::MemberSpecializationInfo *Info = D->getMemberSpecializationInfo();
     if (!Info)
       return true;
     
@@ -839,11 +839,11 @@ public:
       return true;
 
     auto TSK = FD->getTemplateSpecializationKind();
-    if (TSK == TSK_ExplicitInstantiationDeclaration)
+    if (TSK == clang::TSK_ExplicitInstantiationDeclaration)
       return true;
 
     // Allow explicitly specialized class member functions declared out of line
-    if (FD->isCXXClassMember() && TSK != TSK_ExplicitSpecialization)
+    if (FD->isCXXClassMember() && TSK != clang::TSK_ExplicitSpecialization)
       return true;
 
     if (isAlreadyExported(FD, true))
@@ -853,7 +853,7 @@ public:
     if (FD->isDependentContext())
       return true;
 
-    if (FD->hasAttr<BuiltinAttr>()) {
+    if (FD->hasAttr<clang::BuiltinAttr>()) {
       if (debuglog) {
         llvm::outs() << "Skipping builtin: " << FD->getName() << '\n';
       }
@@ -881,9 +881,9 @@ public:
     this->sema = &sema;
   }
 
-  VarDecl *FirstUnexportedStaticField(clang::CXXRecordDecl *D) {
+  clang::VarDecl *FirstUnexportedStaticField(clang::CXXRecordDecl *D) {
     for (clang::Decl* FD : D->decls()) {
-      VarDecl *VD = clang::dyn_cast<VarDecl>(FD);
+      clang::VarDecl *VD = clang::dyn_cast<clang::VarDecl>(FD);
       if (!VD)
         continue;
       if (!VD->isStaticDataMember() || VD->hasInit())
@@ -904,7 +904,7 @@ public:
   UnexportedStatus GetUnexportedMembers(clang::CXXRecordDecl *D, llvm::SmallVector<clang::Decl*> &unexportedMembers) {
     bool partialExports = false;;
     for (clang::Decl* FD : D->decls()) {
-      VarDecl *VD = clang::dyn_cast<clang::VarDecl>(FD);
+      clang::VarDecl *VD = clang::dyn_cast<clang::VarDecl>(FD);
 
       if (isAlreadyExported(FD, false)) {
         partialExports = true;
@@ -942,8 +942,7 @@ public:
 
   bool isAlreadyExported(const clang::Decl *D, bool ignoreInherited) {
     for (auto *Atrr : D->attrs()) {
-
-      if (auto *annotation = clang::dyn_cast<AnnotateAttr>(Atrr)) {
+      if (auto *annotation = clang::dyn_cast<clang::AnnotateAttr>(Atrr)) {
         if (Atrr->isInherited() && ignoreInherited) {
           if (debuglog) {
             llvm::StringRef name = D->getDeclKindName();
@@ -961,8 +960,8 @@ public:
           }
           return true;
         }
-      } else if (clang::isa<DLLExportAttr>(Atrr) || clang::isa<DLLImportAttr>(Atrr) ||
-                 clang::isa<VisibilityAttr>(Atrr)) {
+      } else if (clang::isa<clang::DLLExportAttr>(Atrr) || clang::isa<clang::DLLImportAttr>(Atrr) ||
+                 clang::isa<clang::VisibilityAttr>(Atrr)) {
         auto range = D->getSourceRange();
         clang::FullSourceLoc location = context_.getFullLoc(Atrr->getLocation()).getExpansionLoc();
         // The source range we get for functions and variables starts after there attributes
@@ -1023,18 +1022,18 @@ public:
     return FileLoc(location.getFileEntryRef()->getName(), location.getLineNumber(), location.getColumnNumber());
   }
 
-  SourceRange GetLineSourceRangeLoc(clang::SourceLocation loc, int &offsetInLine) {
+  clang::SourceRange GetLineSourceRangeLoc(clang::SourceLocation loc, int &offsetInLine) {
     clang::FullSourceLoc fullLoc = context_.getFullLoc(loc);
     auto &SM = context_.getSourceManager();
     int lineStart = fullLoc.getLineNumber();
     auto start = SM.translateLineCol(fullLoc.getFileID(), lineStart-1, 0).getLocWithOffset(1);
     auto end = SM.translateLineCol(fullLoc.getFileID(), lineStart, 0);
     offsetInLine = fullLoc.getColumnNumber();
-    return SourceRange(start, end);
+    return clang::SourceRange(start, end);
   }
 
   llvm::StringRef GetSourceTextForRange(clang::SourceRange range) {
-    return Lexer::getSourceText(clang::CharSourceRange::getTokenRange(range),
+    return clang::Lexer::getSourceText(clang::CharSourceRange::getTokenRange(range),
                                 context_.getSourceManager(), context_.getLangOpts());
   }
 
@@ -1045,16 +1044,16 @@ public:
 };
 
 class RewritesReceiver : public clang::edit::EditsReceiver {
-  Rewriter &Rewrite;
+  clang::Rewriter &Rewrite;
 
 public:
-  RewritesReceiver(Rewriter &Rewrite) : Rewrite(Rewrite) {}
+  RewritesReceiver(clang::Rewriter &Rewrite) : Rewrite(Rewrite) {}
 
-  void insert(SourceLocation loc, StringRef text) override {
+  void insert(clang::SourceLocation loc, clang::StringRef text) override {
     Rewrite.InsertText(loc, text);
   }
 
-  void replace(CharSourceRange range, StringRef text) override {
+  void replace(clang::CharSourceRange range, clang::StringRef text) override {
     Rewrite.ReplaceText(range.getBegin(), Rewrite.getRangeSize(range), text);
   }
 };
@@ -1083,7 +1082,7 @@ public:
 
   void HandleTranslationUnit(clang::ASTContext &context) override {
     using namespace clang::tooling;
-    SourceManager& SM = context.getSourceManager();
+    clang::SourceManager& SM = context.getSourceManager();
 
     if (apply_fixits) {
       clang::DiagnosticsEngine &diagnostics_engine = context.getDiagnostics();
@@ -1100,16 +1099,16 @@ public:
     if (apply_fixits) {
       rewriter_->ProcessRewrites();
 
-      tooling::ApplyChangesSpec spec;
+      clang::tooling::ApplyChangesSpec spec;
       auto formatStyle = exportOption.Owner->getClangFormatStyle();
       if (formatStyle) {
         spec.Style = *formatStyle;
-        spec.Format = tooling::ApplyChangesSpec::kAll;
+        spec.Format = clang::tooling::ApplyChangesSpec::kAll;
       }
 
       for (auto I = rewriter_->buffer_begin(), 
                 E = rewriter_->buffer_end(); I != E; I++) {
-        OptionalFileEntryRef Entry = SM.getFileEntryRefForID(I->first);
+        clang::OptionalFileEntryRef Entry = SM.getFileEntryRefForID(I->first);
 
         llvm::SmallString<255> name = Entry->getName();
         llvm::sys::path::native(name);
@@ -1118,7 +1117,7 @@ public:
           std::string output;
           llvm::raw_string_ostream OS(output);
 
-          RewriteBuffer &RewriteBuf = I->second;
+          clang::RewriteBuffer &RewriteBuf = I->second;
           RewriteBuf.write(OS);
           OS.flush();
           if (exportOption.AddExportHeaderInclude && !exportOption.ExportMacroHeader.empty()) {
@@ -1155,7 +1154,7 @@ struct action : clang::ASTFrontendAction {
 
   BaseExportOptions *exportOptions;
 
-  bool BeginInvocation(CompilerInstance &CI) override {
+  bool BeginInvocation(clang::CompilerInstance &CI) override {
     auto name = getCurrentFileOrBufferName();
     auto errorOrFile = CI.getFileManager().getFileRef(name);
 
@@ -1202,8 +1201,8 @@ struct action : clang::ASTFrontendAction {
 
     bool skipFunctionBodies = true;
     CI.getFrontendOpts().SkipFunctionBodies = skipFunctionBodies;
-    DiagnosticsEngine &Diag = getCompilerInstance().getDiagnostics();
-    Diag.setSeverity(clang::diag::warn_unused_private_field, diag::Severity::Ignored, SourceLocation());
+    clang::DiagnosticsEngine &Diag = getCompilerInstance().getDiagnostics();
+    Diag.setSeverity(clang::diag::warn_unused_private_field, clang::diag::Severity::Ignored, clang::SourceLocation());
 
     return std::make_unique<idt::consumer>(CI.getASTContext(), *exportOptions, skipFunctionBodies, owner);
   }
@@ -1228,7 +1227,7 @@ public:
     : DB(db) {
   }
 
-  std::vector<clang::tooling::CompileCommand> getCompileCommands(StringRef F) const override {
+  std::vector<clang::tooling::CompileCommand> getCompileCommands(clang::StringRef F) const override {
     return DB.getCompileCommands(F);
   }
 
@@ -1315,8 +1314,6 @@ int main(int argc, char *argv[]) {
       llvm::errs() << "Reading export_config.json failed: " << error;
       return EXIT_FAILURE;
     }
-    FileManager *FileMgr =
-      new FileManager(FileSystemOptions(), llvm::vfs::getRealFileSystem());
     
     llvm::SmallString<256> headerDirectory;
     std::vector<std::string> files;
