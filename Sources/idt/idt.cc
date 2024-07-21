@@ -1018,6 +1018,8 @@ public:
   };
 
   FileLoc GetFileLocation(clang::SourceLocation loc) {
+    if (loc.isInvalid())
+      return FileLoc("", 0, 0);
     clang::FullSourceLoc location = context_.getFullLoc(loc).getExpansionLoc();
     return FileLoc(location.getFileEntryRef()->getName(), location.getLineNumber(), location.getColumnNumber());
   }
