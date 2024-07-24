@@ -303,7 +303,7 @@ public:
         if (auto *F = clang::dyn_cast<clang::FunctionDecl>(member)) {
           ExportFunction(F);
         } else {
-          ExportVariable(clang::dyn_cast<clang::VarDecl>(member));
+          ExportVariable(clang::dyn_cast<clang::VarDecl>(member), options.ClassDataMacro);
         }
       }
       return true;
@@ -499,7 +499,11 @@ public:
     clang::FullSourceLoc location = GetFullExpansionLoc(D->getLocation());
 
     if (exportMacro.empty()) {
-      exportMacro = options.ExportMacro;
+      if (!options.DataMacro.empty()) {
+        exportMacro = options.DataMacro;
+      } else {
+        exportMacro = options.ExportMacro;
+      }
     }
 
     clang::SourceLocation insertion_point = D->getBeginLoc();

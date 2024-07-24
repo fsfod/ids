@@ -30,14 +30,16 @@ class ExportOptions;
   _(ExportMembers, exportMembers) \
   _(AddExportHeaderInclude, addExportHeaderInclude)
 
-#define OVERRIDABLE_OPTION_STRINGS(_)                                            \
+#define OVERRIDABLE_OPTION_STRINGS(_)                                          \
   _(IsGeneratingMacro, isGeneratingMacro)                                      \
   _(ExportMacro, exportMacro)                                                  \
   _(ClassMacro, classMacro)                                                    \
+  _(DataMacro, dataMacro)                                                      \
+  _(ClassDataMacro, classDataMacro)                                         \
   _(ExternTemplateMacro, externTemplateMacro)                                  \
   _(ExportTemplateMacro, exportTemplateMacro)                                  \
   _(ExternCMacro, externCMacro)                                                \
-  _(ExportMacroHeader, exportMacroHeader)                                      \
+  _(ExportMacroHeader, exportMacroHeader)
 
 #define OVERRIDABLE_OPTIONS_LIST(_)                                            \
   OVERRIDABLE_OPTION_STRINGS(_)                                                \
@@ -77,6 +79,10 @@ struct BaseExportOptions {
   std::string ExternCMacro;
   // optional
   std::string ExportTemplateMacro; 
+  // optional used on global variables
+  std::string DataMacro;
+  // optional used on global and static class variables
+  std::string ClassDataMacro;
   // optional, This is defined while parsing headers scan for targets for
   // export macros. This should cause the code to not define the export macros
   // so the tool can define them to a clang annotate attribute
