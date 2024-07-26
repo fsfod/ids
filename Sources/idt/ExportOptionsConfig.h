@@ -27,8 +27,9 @@ class ExportOptions;
   _(ExportSimpleClasses, exportSimpleClasses)                                  \
   _(IsGeneratingMacro, isGeneratingMacro)                                      \
   _(ExportMacroHeader, exportMacroHeader)                                      \
-  _(ExportMembers, exportMembers) \
-  _(AddExportHeaderInclude, addExportHeaderInclude)
+  _(ExportMembers, exportMembers)                                              \
+  _(AddExportHeaderInclude, addExportHeaderInclude)                            \
+  _(ForceExportClassData, forceExportClassData) 
 
 #define OVERRIDABLE_OPTION_STRINGS(_)                                          \
   _(IsGeneratingMacro, isGeneratingMacro)                                      \
@@ -97,6 +98,8 @@ struct BaseExportOptions {
   BoolOption ExportTemplates;
   BoolOption ExportMembers;
   BoolOption AddExportHeaderInclude;
+  // Export individuals class static variables even if class is already exported
+  BoolOption ForceExportClassData;
 
   BaseExportOptions() {
   }

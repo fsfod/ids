@@ -290,24 +290,38 @@ public:
       return true;
     }
 
-    if (isAlreadyExported(D, true))
+    bool alreadyExported = isAlreadyExported(D, true);
+
+    // Do we still need to check for exporting individual members
+    if (alreadyExported && !options.ForceExportClassData)
       return true;
 
     llvm::SmallVector<clang::Decl*> unexported;
-    auto status = GetUnexportedMembers(D, unexported);
+    ExportedStats exportCounts;
+    auto status = GetUnexportedMembers(D, unexported, exportCounts);
 
-    bool requiresExport = status != UnexportedStatus::None || D->isAbstract();
+    // If some methods or static variables are already individually exported continue to export any new 
+    // methods or variables as well instead of exporting the class.
+    bool exportMethods = !alreadyExported && (status == UnexportedStatus::Partial || options.ExportMembers);
 
-    if (status == UnexportedStatus::Partial || (options.ExportMembers && status == UnexportedStatus::All)) {
+    // Force exported static variables even if the class is alreadyed exported
+    if ((options.ForceExportClassData && exportCounts.UnexportedVariables) || exportMethods) {
       for (clang::Decl* member : unexported) {
-        if (auto *F = clang::dyn_cast<clang::FunctionDecl>(member)) {
+        auto *F = clang::dyn_cast<clang::FunctionDecl>(member);
+        if (F && exportMethods) {
           ExportFunction(F);
-        } else {
-          ExportVariable(clang::dyn_cast<clang::VarDecl>(member), options.ClassDataMacro);
+        } else if (auto *V = clang::dyn_cast<clang::VarDecl>(member)) {
+          if (V->isConstexpr())
+            continue;
+          ExportVariable(V, options.ClassDataMacro);
         }
       }
-      return true;
     }
+
+    if (alreadyExported || options.ExportMembers || status == UnexportedStatus::Partial)
+      return true;
+
+    bool requiresExport = status != UnexportedStatus::None || D->isAbstract();
 
     // Don't add DLL export to PoD structs that also have no methods
     if (skip_simple_classes && !requiresExport) {
@@ -905,24 +919,37 @@ public:
     All,
   };
 
-  UnexportedStatus GetUnexportedMembers(clang::CXXRecordDecl *D, llvm::SmallVector<clang::Decl*> &unexportedMembers) {
-    bool partialExports = false;;
+  struct ExportedStats {
+    int UnexportedMethods = 0;
+    int UnexportedVariables = 0;
+    int ExportedMethods = 0;
+    int ExportedVariables = 0;
+  };
+
+  UnexportedStatus GetUnexportedMembers(clang::CXXRecordDecl *D, llvm::SmallVector<clang::Decl*> &unexportedMembers,
+                                        ExportedStats &stats) {
+
     for (clang::Decl* FD : D->decls()) {
       clang::VarDecl *VD = clang::dyn_cast<clang::VarDecl>(FD);
 
       if (isAlreadyExported(FD, false)) {
-        partialExports = true;
+        if (VD) {
+          stats.ExportedVariables++;
+        } else {
+          stats.ExportedMethods++;
+        }
         continue;
       }
 
       if (VD) {
         if (VD->isStaticDataMember() && !VD->hasInit()) {
+          stats.UnexportedVariables++;
           unexportedMembers.push_back(FD);
         }
       }
 
       const clang::CXXMethodDecl* MD = clang::dyn_cast<clang::CXXMethodDecl>(FD);
-      if(MD) {
+      if (MD) {
         if (MD->isImplicit() || MD->isDeleted() || MD->isDefaulted() || MD->isPureVirtual())
           continue;
 
@@ -933,15 +960,19 @@ public:
         if (MD->isInlined() || (def && def->isInlined())) {
           continue;
         }
-
+        stats.UnexportedMethods++;
         unexportedMembers.push_back(FD);
       }
     }
 
     if (unexportedMembers.empty())
       return UnexportedStatus::None;
-    else
-      return partialExports ? UnexportedStatus::Partial : UnexportedStatus::All;
+    
+    if ((stats.ExportedMethods > 0 || stats.ExportedVariables > 0) && 
+        (stats.UnexportedMethods > 0 || stats.UnexportedVariables > 0))
+      return UnexportedStatus::Partial;
+
+    return UnexportedStatus::All;
   }
 
   bool isAlreadyExported(const clang::Decl *D, bool ignoreInherited) {
