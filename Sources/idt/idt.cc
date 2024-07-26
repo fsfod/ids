@@ -1191,6 +1191,12 @@ struct action : clang::ASTFrontendAction {
 
   BaseExportOptions *exportOptions;
 
+#define DEFINE_EXPORRT_MACRO(fieldName, optName) \
+    if (!exportOptions->fieldName.empty() && !seenMacros.contains(exportOptions->fieldName)) { \
+      seenMacros.insert(exportOptions->fieldName);\
+      PreproOpts.addMacroDef((exportOptions->fieldName + annotate).str()); \
+    } \
+
   bool BeginInvocation(clang::CompilerInstance &CI) override {
     auto name = getCurrentFileOrBufferName();
     auto errorOrFile = CI.getFileManager().getFileRef(name);
@@ -1202,32 +1208,24 @@ struct action : clang::ASTFrontendAction {
     }
 
     auto &PreproOpts = CI.getPreprocessorOpts();
-//CI.getLangOpts().MSVCCompat
+
+    llvm::StringSet<> seenMacros;
     llvm::StringRef annotate = "=__attribute__((annotate(\"idt_export\")))";
-
     PreproOpts.addMacroDef((exportOptions->ExportMacro + annotate).str());
-
-    if (!exportOptions->ClassMacro.empty()) {
-      PreproOpts.addMacroDef((exportOptions->ClassMacro + annotate).str());
-    }
-
-    if (!exportOptions->ExternCMacro.empty() && 
-        exportOptions->ExternCMacro != exportOptions->ExportMacro) {
-      PreproOpts.addMacroDef((exportOptions->ExternCMacro + annotate).str());
-    }
-
-    if (!exportOptions->ExternTemplateMacro.empty()) {
-      PreproOpts.addMacroDef((exportOptions->ExternTemplateMacro + annotate).str());
-    }
+    seenMacros.insert(exportOptions->ExportMacro);
 
     for (auto& name : exportOptions->OtherExportMacros) {
       PreproOpts.addMacroDef((name + annotate).str());
+      seenMacros.insert(name);
     }
 
     if (!exportOptions->IsGeneratingMacro.empty()) {
       PreproOpts.addMacroDef(exportOptions->IsGeneratingMacro);
+      seenMacros.insert(exportOptions->IsGeneratingMacro);
     }
 
+    seenMacros.insert(exportOptions->ExportMacroHeader);
+    OVERRIDABLE_OPTION_STRINGS(DEFINE_EXPORRT_MACRO);
     return clang::ASTFrontendAction::BeginInvocation(CI);
   }
 
