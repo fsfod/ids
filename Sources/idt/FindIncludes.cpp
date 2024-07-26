@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "clang/Frontend/FrontendAction.h"
+#include "clang/Frontend/TextDiagnosticBuffer.h"
+#include "clang/Frontend/TextDiagnosticPrinter.h"
+#include "clang/Frontend/TextDiagnostic.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/Support/Process.h"
 #include "llvm/Support/ThreadPool.h"
 #include "FindIncludes.h"
 #include "ExportOptionsConfig.h"
@@ -162,6 +166,147 @@ Error GatherHeaders(StringRef headerDirectory, tooling::CommonOptionsParser &opt
   return Error::success();
 }
 
+ ClangToolRunner::ClangToolRunner() 
+   : StopOnFirstError(false), PrintProgress(true) {
+   bool ShowColors = true;
+   if (std::optional<std::string> NoColor =
+     llvm::sys::Process::GetEnv("NO_COLOR");
+     NoColor && !NoColor->empty()) {
+     // If the user set the NO_COLOR environment variable, we'll honor that
+     // unless the command line overrides it.
+     ShowColors = false;
+   }
+
+   DiagOptions = new DiagnosticOptions();
+
+   if (ShowColors) {
+     DiagOptions->ShowColors = ShowColors;
+     DiagOptions->UseANSIEscapeCodes = true;
+   }
+ }
+
+ClangToolRunner::~ClangToolRunner() {}
+
+void ClangToolRunner::Log(llvm::Twine Msg) {
+  std::unique_lock<std::mutex> LockGuard(TUMutex);
+  llvm::outs() << Msg.str() << "\n";
+}
+
+void ClangToolRunner::AppendError(llvm::Twine Msg) {
+  std::unique_lock<std::mutex> LockGuard(TUMutex);
+  llvm::errs() << Msg.str() << "\n";
+}
+
+class WrapperFactory : public FrontendActionFactory {
+public:
+  WrapperFactory(ClangToolRunner &Owner, FrontendActionFactory &Factory)
+    : Owner(Owner), Factory(Factory), DiagBuffer(&Owner){
+  }
+
+  std::unique_ptr<FrontendAction> create() override {
+    //return std::make_unique<OutputCapturingFrontendAction>(Owner, std::move(Factory.create()), DiagBuffer);
+    return Factory.create();
+  }
+
+  bool runInvocation(std::shared_ptr<CompilerInvocation> Invocation,
+                     FileManager *Files,
+                     std::shared_ptr<PCHContainerOperations> PCHContainerOps,
+                     DiagnosticConsumer *DiagConsumer) override {
+
+    // Create a compiler instance to handle the actual work.
+    CompilerInstance Compiler(std::move(PCHContainerOps));
+    Compiler.setInvocation(std::move(Invocation));
+    Compiler.setFileManager(Files);
+
+    // The FrontendAction can have lifetime requirements for Compiler or its
+    // members, and we need to ensure it's deleted earlier than Compiler. So we
+    // pass it to an std::unique_ptr declared after the Compiler variable.
+    std::unique_ptr<FrontendAction> ScopedToolAction(create());
+
+    // Create the compiler's actual diagnostics engine.
+    // &DiagBuffer
+    Compiler.createDiagnostics(&DiagBuffer, /*ShouldOwnClient=*/false);
+    if (!Compiler.hasDiagnostics())
+      return false;
+
+    Compiler.createSourceManager(*Files);
+    const bool Success = Compiler.ExecuteAction(*ScopedToolAction);
+
+    Files->clearStatCache();
+    return Success;
+
+    // Note we skip calling Factory's runInvocation so our 'create' function is called
+    //return FrontendActionFactory::runInvocation(Invocation, Files, PCHContainerOps,
+    //                             &DiagBuffer);
+  }
+
+  ClangToolRunner &Owner;
+  FrontendActionFactory &Factory;
+  BufferedDiagnostics DiagBuffer;
+};
+
+Error ClangToolRunner::runTool(CompilationDatabase &CompDb,
+                               FrontendActionFactory &ActionFactory,
+                               std::vector<std::string> Files,
+                               int threadCount) {
+  Factory = &ActionFactory;
+  TotalFiles = Files.size();
+  Compilations = &CompDb;
+  ItemsProcessed = 0;
+  ErrorMsg.clear();
+
+  {
+    llvm::DefaultThreadPool Pool(llvm::hardware_concurrency(threadCount));
+    for (std::string &File : Files) {
+      Pool.async([&](std::string &path) { processFile(path); }, File);
+    }
+    // Make sure all tasks have finished before resetting the working directory.
+    Pool.wait();
+  }
+
+  if (!ErrorMsg.empty())
+    return createStringError(ErrorMsg);
+
+  return Error::success();
+}
+
+void ClangToolRunner::processFile(const std::string &Path) {
+  if (StopOnFirstError && hasErrors())
+    return;
+  int jobId = ItemsProcessed++;
+  if (PrintProgress)
+    Log("[" + std::to_string(jobId) + "/" +
+        std::to_string(TotalFiles) + "] Processing file " + Path);
+
+  // Each thread gets an independent copy of a VFS to allow different
+  // concurrent working directories.
+  IntrusiveRefCntPtr<llvm::vfs::FileSystem> FS =
+      llvm::vfs::createPhysicalFileSystem();
+  
+  ClangTool Tool(*Compilations, {Path},
+                 std::make_shared<PCHContainerOperations>(), FS);
+  auto commands = Compilations->getCompileCommands(Path);
+  // Tool.appendArgumentsAdjuster(Action.second);
+  // Tool.appendArgumentsAdjuster(getDefaultArgumentsAdjusters());
+
+  WrapperFactory factory(*this, *Factory);
+
+  if (Tool.run(&factory))
+    AppendError(llvm::Twine("Failed to run action on ") + Path + "\n");
+}
+
+void ClangToolRunner::logDiagnostics(BufferedDiagnostics &buffer) {
+  if (buffer.begin() != buffer.end()) {
+    std::unique_lock<std::mutex> LockGuard(TUMutex);
+    buffer.PrintDiagnostic(*DiagOptions);
+  }
+}
+
+std::mutex &ClangToolRunner::getMutex() { return TUMutex; }
+
+bool ClangToolRunner::hasErrors() { return !ErrorMsg.empty(); }
+
+
 Error runClangToolMultithreaded(CompilationDatabase &Compilations, FrontendActionFactory& factory, std::vector<std::string> Files, int threadCount) {
   std::string ErrorMsg;
   std::mutex TUMutex;
@@ -312,3 +457,28 @@ Error HeaderPathMatcher::addRawPathPatten(llvm::StringRef pathGlob) {
   return Error::success();
 }
 
+
+void BufferedDiagnostics::BeginSourceFile(const clang::LangOptions &LangOpts,
+                                          const clang::Preprocessor *PP) {
+  this->LangOpts = LangOpts;
+  this->PP = PP;
+}
+
+
+void BufferedDiagnostics::EndSourceFile() { 
+  Owner->logDiagnostics(*this); 
+  Out.clear();
+}
+
+void BufferedDiagnostics::HandleDiagnostic(
+    clang::DiagnosticsEngine::Level DiagLevel, const clang::Diagnostic &Info) {
+  Out.emplace_back(DiagLevel, Info);
+}
+
+void BufferedDiagnostics::PrintDiagnostic(DiagnosticOptions &Options) {
+  TextDiagnostic Renderer(llvm::outs(), LangOpts, &Options, PP);
+
+  for (auto& diag : Out) {
+    Renderer.emitStoredDiagnostic(diag);
+  }
+}

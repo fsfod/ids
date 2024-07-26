@@ -1363,16 +1363,10 @@ int main(int argc, char *argv[]) {
    // }
   }
 
-  std::unique_ptr<ClangTool> tool;
-  if (singleFile) {
-    tool = std::make_unique<ClangTool>(ClangTool(*InferedDB.get(), { options->getSourcePathList() }));
-  } else {
-    tool = std::make_unique<ClangTool>(ClangTool(*InferedDB.get(), { sourcePathList }));
-  }
-
   int result;
   idt::factory factory(&fileOptions);
-  llvm::Error err = runClangToolMultithreaded(*InferedDB.get(), factory, sourcePathList, thread_parallelism);
+  ClangToolRunner runner;
+  llvm::Error err = runner.runTool(*InferedDB.get(), factory, sourcePathList, thread_parallelism);
 
   if (err) {
     llvm::errs() << "Running ASTAction failed:" << err;

@@ -98,6 +98,18 @@ public:
   void HandleDiagnostic(DiagnosticsEngine::Level DiagLevel,
                         const Diagnostic &Info) override;
 
+  void BeginSourceFile(const LangOptions &LangOpts, const Preprocessor *PP = nullptr) override {
+    Client->BeginSourceFile(LangOpts, PP);
+  }
+
+  void EndSourceFile() override {
+    Client->EndSourceFile();
+  }
+
+  void finish() override {
+    Client->finish();
+  }
+
   /// Emit a diagnostic via the adapted diagnostic client.
   void Diag(SourceLocation Loc, unsigned DiagID);
 

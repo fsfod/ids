@@ -7,6 +7,10 @@
 #include <string>
 #include <vector>
 
+namespace clang {
+  class TextDiagnosticBuffer;
+}
+
 typedef std::pair<std::string, llvm::StringSet<>> FileIncludeResults;
 
 class HeaderPathMatcher;
@@ -147,4 +151,76 @@ public:
   }
 
   HeaderResults headerIncludes;
+};
+
+class BufferedDiagnostics;
+class WrapperFactory;
+class OutputCapturingFrontendAction;
+
+class ClangToolRunner {
+public:
+  ClangToolRunner();
+  ~ClangToolRunner();
+  llvm::Error runTool(clang::tooling::CompilationDatabase &CompDb, clang::tooling::FrontendActionFactory &ActionFactory, 
+                      std::vector<std::string> Files, int threadCount);
+
+  void Log(llvm::Twine Msg);
+  void AppendError(llvm::Twine Msg);
+  std::mutex &getMutex();
+
+  
+  void setStopOnFirstError(bool shouldStop) { StopOnFirstError = shouldStop; }
+  void setPrintProgress(bool shouldPrint) { PrintProgress = shouldPrint; }
+  bool hasErrors();
+
+protected:
+  virtual void processFile(const std::string &Path);
+  void logDiagnostics(BufferedDiagnostics &buffer);
+  friend class OutputCapturingFrontendAction;
+  friend class BufferedDiagnostics;
+
+private:
+  llvm::IntrusiveRefCntPtr<clang::DiagnosticOptions> DiagOptions;
+  clang::tooling::CompilationDatabase *Compilations;
+  clang::tooling::FrontendActionFactory *Factory;
+  bool StopOnFirstError;
+  bool PrintProgress;
+  int ThreadCount;
+  int TotalFiles;
+  std::atomic<int> ItemsProcessed;
+  std::string ErrorMsg;
+  std::mutex TUMutex;
+};
+
+class BufferedDiagnostics : public clang::DiagnosticConsumer {
+  std::vector<clang::StoredDiagnostic> Out;
+  clang::LangOptions LangOpts;
+  ClangToolRunner *Owner;
+
+public:
+  BufferedDiagnostics(ClangToolRunner *Owner) : Owner(Owner) {
+  }
+  BufferedDiagnostics() {
+  }
+
+  void BeginSourceFile(const clang::LangOptions &LangOpts,
+                       const clang::Preprocessor *) override;
+
+  void EndSourceFile() override;
+
+  /// Callback to inform the diagnostic client that processing of all
+  /// source files has ended.
+  virtual void finish() override {
+    
+  }
+
+  using diag_iterator = std::vector<clang::StoredDiagnostic>::const_iterator;
+
+  diag_iterator begin() const { return Out.begin(); }
+  diag_iterator end() const { return Out.end(); }
+
+  void HandleDiagnostic(clang::DiagnosticsEngine::Level DiagLevel,
+    const clang::Diagnostic &Info) override;
+  void PrintDiagnostic(clang::DiagnosticOptions &Options);
+  const clang::Preprocessor * PP;
 };
