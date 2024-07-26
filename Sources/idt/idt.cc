@@ -101,6 +101,11 @@ inplace("inplace", llvm::cl::init(false),
         llvm::cl::desc("Apply suggested changes in-place"),
         llvm::cl::cat(idt::category));
 
+llvm::cl::opt<bool>
+interactive("interactive", llvm::cl::init(false),
+  llvm::cl::desc("Display list of changed files at the end and ask for confirmation to write them"),
+  llvm::cl::cat(idt::category));
+
 llvm::cl::list<std::string>
 ignored_functions("ignore",
                   llvm::cl::desc("Ignore one or more functions"),
@@ -1373,7 +1378,11 @@ int main(int argc, char *argv[]) {
     return EXIT_FAILURE;
   }
 
-  if (factory.hasResults()) {
+  if (!apply_fixits) {
+    return result;
+  }
+
+  if (interactive && factory.hasResults()) {
     llvm::outs() << "Files to modify:\n";
     for (auto & pair : factory.results()) {
       llvm::StringRef filename = pair.first;
@@ -1394,22 +1403,24 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  for (auto & pair : factory.results()){
-    std::error_code EC;
-    std::unique_ptr<llvm::raw_fd_ostream> OS;
-    llvm::StringRef filename = pair.first;
-    OS.reset(new llvm::raw_fd_ostream(filename, EC, llvm::sys::fs::OF_None));
-    if (EC) {
-      llvm::errs() << "Failed to write changes for '" << filename << "', Unable to open file error was " << EC.message();
-      result = 1;
-      continue;
+  if (apply_fixits) {
+    for (auto & pair : factory.results()) {
+      std::error_code EC;
+      std::unique_ptr<llvm::raw_fd_ostream> OS;
+      llvm::StringRef filename = pair.first;
+      OS.reset(new llvm::raw_fd_ostream(filename, EC, llvm::sys::fs::OF_None));
+      if (EC) {
+        llvm::errs() << "Failed to write changes for '" << filename << "', Unable to open file error was " << EC.message();
+        result = 1;
+        continue;
+      }
+      OS->write(pair.second.c_str(), pair.second.size());
+      OS->flush();
     }
-    OS->write(pair.second.c_str(), pair.second.size());
-    OS->flush();
-  }
 
-  if (factory.hasResults()) {
-    llvm::outs() << "all file changes written.\n";
+    if (factory.hasResults()) {
+      llvm::outs() << "All file changes written.\n";
+    }
   }
 
   return result;
