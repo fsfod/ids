@@ -323,7 +323,11 @@ public:
       }
     }
 
-    if (alreadyExported || options.ExportMembers || status == UnexportedStatus::Partial)
+    // Don't try to export the class directly if individual members are exported
+    if (exportCounts.ExportedMethods || exportCounts.ExportedVariables || status == UnexportedStatus::Partial)
+      return true;
+
+    if (alreadyExported || options.ExportMembers)
       return true;
 
     bool requiresExport = status != UnexportedStatus::None || D->isAbstract();
