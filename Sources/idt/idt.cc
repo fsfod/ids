@@ -783,18 +783,18 @@ public:
     auto instLocation = GetFileLocation(D->getPointOfInstantiation());
     int nameOffset = 0;
     clang::SourceRange lineRange = GetLineSourceRangeLoc(D->getPointOfInstantiation(), nameOffset);
-    llvm::StringRef lineText = GetSourceTextForRange(lineRange);
+    std::string lineText = GetSourceTextForRange(lineRange).str();
     llvm::StringRef declartionStart = lineText.substr(0, nameOffset - 1);
+
+    if (isAlreadyExported(D, true))
+      return;
 
     if (debuglog) {
       llvm::outs() << "  Inst: " << instLocation.path << ":" << instLocation.line << '\n';
       llvm::outs() << "    \"" << lineText << '\"\n';
     }
 
-    if (declartionStart.contains(options.ExternTemplateMacro))
-      return;
-
-    clang::Lexer lexer(lineRange.getBegin(), context_.getLangOpts(), lineText.begin(), lineText.begin(), lineText.end());
+    clang::Lexer lexer(lineRange.getBegin(), context_.getLangOpts(), lineText.c_str(), lineText.c_str(), lineText.c_str() + lineText.size());
 
     clang::SourceLocation insert_point;
     if (!LexExternTemplate(lexer, insert_point)) {
