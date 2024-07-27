@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "clang/Tooling/Tooling.h"
-#include "llvm/Support/Error.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/Support/Error.h"
 #include <string>
 #include <vector>
 

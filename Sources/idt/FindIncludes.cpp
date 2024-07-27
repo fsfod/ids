@@ -1,15 +1,15 @@
 // Copyright (c) 2024 Thomas Fransham.  All Rights Reserved.
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include "FindIncludes.h"
+#include "ExportOptionsConfig.h"
 #include "clang/Frontend/FrontendAction.h"
+#include "clang/Frontend/TextDiagnostic.h"
 #include "clang/Frontend/TextDiagnosticBuffer.h"
 #include "clang/Frontend/TextDiagnosticPrinter.h"
-#include "clang/Frontend/TextDiagnostic.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/ThreadPool.h"
-#include "FindIncludes.h"
-#include "ExportOptionsConfig.h"
 
 using namespace llvm;
 using namespace clang;

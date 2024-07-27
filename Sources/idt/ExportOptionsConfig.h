@@ -13,11 +13,11 @@
 #ifndef EXPORT_OPTIONS_CONFIG_H
 #define EXPORT_OPTIONS_CONFIG_H
 
-#include <llvm/Support/Error.h>
-#include <llvm/ADT/SmallVector.h>
 #include <clang/Format/Format.h>
-#include <vector>
+#include <llvm/ADT/SmallVector.h>
+#include <llvm/Support/Error.h>
 #include <string>
+#include <vector>
 
 class ExportOptions;
 

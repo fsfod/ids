@@ -1,6 +1,10 @@
 // Copyright (c) 2021 Saleem Abdulrasool.  All Rights Reserved.
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include "ExportOptionsConfig.h"
+#include "FindIncludes.h"
+#include "FixItRewriter2.h"
+#include "clang/AST/DeclCXX.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/DiagnosticSema.h"
@@ -8,23 +12,19 @@
 #include "clang/Format/Format.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
+#include "clang/Lex/PPCallbacks.h"
 #include "clang/Lex/PreprocessorOptions.h"
 #include "clang/Rewrite/Frontend/FixItRewriter.h"
-#include "clang/Tooling/Transformer/RewriteRule.h"
-#include "clang/Tooling/Refactoring/AtomicChange.h"
-#include "clang/Tooling/CompilationDatabase.h"
-#include "clang/Tooling/CommonOptionsParser.h"
-#include "clang/Tooling/Tooling.h"
-#include "clang/AST/DeclCXX.h"
 #include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaConsumer.h"
-#include "clang/Lex/PPCallbacks.h"
+#include "clang/Tooling/CommonOptionsParser.h"
+#include "clang/Tooling/CompilationDatabase.h"
+#include "clang/Tooling/Refactoring/AtomicChange.h"
+#include "clang/Tooling/Tooling.h"
+#include "clang/Tooling/Transformer/RewriteRule.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/GlobPattern.h"
 #include "llvm/Support/Path.h"
-#include "FixItRewriter2.h"
-#include "ExportOptionsConfig.h"
-#include "FindIncludes.h"
 
 #include <cstdlib>
 #include <iostream>
