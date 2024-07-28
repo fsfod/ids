@@ -272,11 +272,7 @@ public:
 
     // We won't visit some forward declared classes again that get a definition in same translation unit
     if (!D->isThisDeclarationADefinition()) {
-      auto realDefinition = D->getDefinition();
-      if (!realDefinition)
-        return true;
-
-      D = realDefinition;
+      return true;
     }
 
     clang::FullSourceLoc location = context_.getFullLoc(D->getLocation()).getExpansionLoc();
