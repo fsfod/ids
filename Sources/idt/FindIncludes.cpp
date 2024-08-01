@@ -240,6 +240,7 @@ public:
     //                             &DiagBuffer);
   }
 
+  FrontendAction* Action;
   ClangToolRunner &Owner;
   FrontendActionFactory &Factory;
   BufferedDiagnostics DiagBuffer;
@@ -298,6 +299,9 @@ void ClangToolRunner::processFile(const std::string &Path) {
 void ClangToolRunner::logDiagnostics(BufferedDiagnostics &buffer) {
   if (buffer.begin() != buffer.end()) {
     std::unique_lock<std::mutex> LockGuard(TUMutex);
+    if (buffer.getNumErrors() > 0) {
+      FailingFiles.push_back(buffer.GetCurrentFile().str());
+    }
     buffer.PrintDiagnostic(*DiagOptions);
   }
 }
@@ -470,9 +474,14 @@ void BufferedDiagnostics::EndSourceFile() {
   Out.clear();
 }
 
+clang::StringRef BufferedDiagnostics::GetCurrentFile() {
+  return CurrentAction ? CurrentAction->getCurrentFile() : "";
+}
+
 void BufferedDiagnostics::HandleDiagnostic(
     clang::DiagnosticsEngine::Level DiagLevel, const clang::Diagnostic &Info) {
   Out.emplace_back(DiagLevel, Info);
+  DiagnosticConsumer::HandleDiagnostic(DiagLevel, Info);
 }
 
 void BufferedDiagnostics::PrintDiagnostic(DiagnosticOptions &Options) {

@@ -1373,6 +1373,13 @@ int main(int argc, char *argv[]) {
   ClangToolRunner runner;
   llvm::Error err = runner.runTool(*InferedDB.get(), factory, sourcePathList, thread_parallelism);
 
+  if (runner.hasErrors()) {
+    llvm::errs() << "Failing files:\n";
+    for (auto & file : runner.getFailingFiles()) {
+      llvm::errs() << "  " << file << "\n";
+    }
+  }
+
   if (err) {
     llvm::errs() << "Running ASTAction failed:" << err;
     return EXIT_FAILURE;

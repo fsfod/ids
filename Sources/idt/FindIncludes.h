@@ -9,6 +9,7 @@
 
 namespace clang {
   class TextDiagnosticBuffer;
+  class FrontendAction;
 }
 
 typedef std::pair<std::string, llvm::StringSet<>> FileIncludeResults;
@@ -172,6 +173,7 @@ public:
   void setStopOnFirstError(bool shouldStop) { StopOnFirstError = shouldStop; }
   void setPrintProgress(bool shouldPrint) { PrintProgress = shouldPrint; }
   bool hasErrors();
+  std::vector<std::string>& getFailingFiles() { return FailingFiles; }
 
 protected:
   virtual void processFile(const std::string &Path);
@@ -188,6 +190,7 @@ private:
   int ThreadCount;
   int TotalFiles;
   std::atomic<int> ItemsProcessed;
+  std::vector<std::string> FailingFiles;
   std::string ErrorMsg;
   std::mutex TUMutex;
 };
@@ -196,6 +199,7 @@ class BufferedDiagnostics : public clang::DiagnosticConsumer {
   std::vector<clang::StoredDiagnostic> Out;
   clang::LangOptions LangOpts;
   ClangToolRunner *Owner;
+  clang::FrontendAction* CurrentAction;
 
 public:
   BufferedDiagnostics(ClangToolRunner *Owner) : Owner(Owner) {
@@ -218,6 +222,16 @@ public:
 
   diag_iterator begin() const { return Out.begin(); }
   diag_iterator end() const { return Out.end(); }
+
+  void setCurrentAction(clang::FrontendAction *Action) {
+    CurrentAction = Action;
+  }
+
+  clang::FrontendAction *getCurrentAction() {
+    return CurrentAction;
+  }
+
+  llvm::StringRef GetCurrentFile();
 
   void HandleDiagnostic(clang::DiagnosticsEngine::Level DiagLevel,
     const clang::Diagnostic &Info) override;
