@@ -111,7 +111,7 @@ bool isHeaderFile(StringRef Path) {
     .Default(false);
 }
 
-Error GatherFilesInDirectory(StringRef directory, std::vector<std::string> &foundfiles, HeaderPathMatcher *filter) {
+Error GatherFilesInDirectory(StringRef directory, std::vector<std::string> &foundfiles, std::function<PathChecker> Filter) {
   using namespace llvm::sys::fs;
   using namespace llvm::sys;
   std::error_code ec;
@@ -133,20 +133,52 @@ Error GatherFilesInDirectory(StringRef directory, std::vector<std::string> &foun
       continue;
 
     StringRef path = F->path();
-    if (!isHeaderFile(path)) {
-      llvm::outs() << "Skipped non header file: " << path << "\n";
+
+    normalizedPath = path; ;
+    std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
+
+    if (Filter(normalizedPath.substr(prefixSize))) {
+      llvm::outs() << "Skipped ignored file: " << path << "\n";
       continue;
     }
+
+    foundfiles.push_back(normalizedPath.str().str());
+  }
+  return Error::success();
+}
+
+Error GatherDirsInDirectory(StringRef directory, std::vector<std::string> &FoundDirectories, HeaderPathMatcher *filter) {
+  using namespace llvm::sys::fs;
+  using namespace llvm::sys;
+  std::error_code ec;
+
+  if (!is_directory(directory)) {
+    return createStringError("Header directory \"" + directory + "\" does not exist\n");
+  }
+
+  SmallString<256> normalizedPath;
+  llvm::sys::path::native(directory, normalizedPath);
+  int prefixSize = normalizedPath.size();
+
+  for (directory_iterator F(directory, ec), E; F != E; F.increment(ec)) {
+    if (ec) {
+      return createStringError(ec, "Directory iteration failed when trying to find headers");
+    }
+
+    if (F->type() != file_type::directory_file)
+      continue;
+
+    StringRef path = F->path();
 
     normalizedPath = path; ;
     std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
 
     if (filter && filter->match(normalizedPath.substr(prefixSize + 1))) {
-      llvm::outs() << "Skipped ignored header: " << path << "\n";
+      llvm::outs() << "Skipped ignored directory: " << path << "\n";
       continue;
     }
 
-    foundfiles.push_back(normalizedPath.str().str());
+    FoundDirectories.push_back(normalizedPath.str().str());
   }
   return Error::success();
 }
@@ -159,7 +191,16 @@ Error GatherHeaders(StringRef headerDirectory, tooling::CommonOptionsParser &opt
 
   SmallString<256> NativePath;
   llvm::sys::path::native(headerDirectory, NativePath);
-  if (Error err = GatherFilesInDirectory(NativePath, files, NULL)) {
+
+  auto Filter = [](StringRef path) {
+    if (!isHeaderFile(path)) {
+      llvm::outs() << "Skipped non header file: " << path << "\n";
+      return true;
+    }
+    return false;
+  };
+
+  if (Error err = GatherFilesInDirectory(NativePath, files, Filter)) {
     return err;
   }
 
@@ -395,16 +436,6 @@ Error getRootHeaders(tooling::CommonOptionsParser &options, std::vector<std::str
   return Error::success();
 }
 
-
-Expected<HeaderPathMatcher> HeaderPathMatcher::create(std::vector<std::string> &pathGlobs, const std::string &rootDirectory) {
-  HeaderPathMatcher matcher;
-  Error err = matcher.addPaths(pathGlobs, rootDirectory);
-  if (err)
-    return err;
-
-  return matcher;
-}
-
 bool HeaderPathMatcher::match(llvm::StringRef path) {
   for (auto& pat : pattens) {
     if (pat.match(path))
@@ -412,8 +443,22 @@ bool HeaderPathMatcher::match(llvm::StringRef path) {
   }
 
   for (auto& s : PlainStrings) {
-    if (path.rfind_insensitive(s) != StringRef::npos)
+    bool result;
+    switch (s.first) {
+    case PathMatchMode::Start:
+      result = path.starts_with_insensitive(s.second);
+      break;
+    case PathMatchMode::End:
+      result = path.ends_with_insensitive(s.second);
+      break;
+    case PathMatchMode::Anywhere:
+      result = path.contains_insensitive(s.second);
+      break;
+    }
+
+    if (result) {
       return true;
+    }
   }
   
   return false;
@@ -433,26 +478,32 @@ std::vector<std::string> HeaderPathMatcher::filterPathList(std::vector<std::stri
   return result;
 }
 
-Error HeaderPathMatcher::addPaths(std::vector<std::string>& pathGlobs, const std::string& rootDirectory) {
-  llvm::SmallString<256> normalizedPath;
-
+Error HeaderPathMatcher::addPaths(std::vector<std::string> &pathGlobs, PathMatchMode MatchMode) {
   for (const auto& path : pathGlobs) {
-    normalizedPath = path;
-    std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
-    auto pattenStart = path.find_first_of("?*[{\\");
-
-    if (pattenStart == std::string::npos) {
-      PlainStrings.push_back(normalizedPath.str().str());
-    } else {
-      auto err = addRawPathPatten(normalizedPath);
-      if (err)
-        return err;
-    }
+    if(auto Err = addPath(path, MatchMode))
+      return Err;
   }
   return Error::success();
 }
 
-Error HeaderPathMatcher::addRawPathPatten(llvm::StringRef pathGlob) {
+Error HeaderPathMatcher::addPath(StringRef Path, PathMatchMode MatchMode) {
+  llvm::SmallString<256> normalizedPath;
+  normalizedPath = Path;
+  std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
+  auto pattenStart = Path.find_first_of("?*[{\\");
+
+  if (pattenStart == std::string::npos) {
+    PlainStrings.emplace_back(std::make_pair(MatchMode, normalizedPath.str().str()));
+  } else {
+    auto err = addPathPatten(normalizedPath);
+    if (err)
+      return err;
+  }
+
+  return Error::success();
+}
+
+Error HeaderPathMatcher::addPathPatten(llvm::StringRef pathGlob) {
   auto Patten = llvm::GlobPattern::create(pathGlob);
   if (!Patten)
     return createStringError("Bad header path glob '" + pathGlob + "', " + toString(Patten.takeError()));
@@ -461,6 +512,9 @@ Error HeaderPathMatcher::addRawPathPatten(llvm::StringRef pathGlob) {
   return Error::success();
 }
 
+void HeaderPathMatcher::addPlainPath(llvm::StringRef Path, PathMatchMode MatchMode) {
+  PlainStrings.emplace_back(std::make_pair(MatchMode, Path));
+}
 
 void BufferedDiagnostics::BeginSourceFile(const clang::LangOptions &LangOpts,
                                           const clang::Preprocessor *PP) {

@@ -31,24 +31,26 @@ class ExportOptions;
   _(AddExportHeaderInclude, addExportHeaderInclude)                            \
   _(ForceExportClassData, forceExportClassData) 
 
-#define OVERRIDABLE_OPTION_STRINGS(_)                                          \
+#define OVERRIDABLE_OPTION_MACROS(_)                                           \
   _(IsGeneratingMacro, isGeneratingMacro)                                      \
   _(ExportMacro, exportMacro)                                                  \
   _(ClassMacro, classMacro)                                                    \
   _(DataMacro, dataMacro)                                                      \
-  _(ClassDataMacro, classDataMacro)                                         \
+  _(ClassDataMacro, classDataMacro)                                            \
   _(ExternTemplateMacro, externTemplateMacro)                                  \
   _(ExportTemplateMacro, exportTemplateMacro)                                  \
   _(ExternCMacro, externCMacro)                                                \
   _(ExportMacroHeader, exportMacroHeader)
 
 #define OVERRIDABLE_OPTIONS_LIST(_)                                            \
-  OVERRIDABLE_OPTION_STRINGS(_)                                                \
-  OVERRIDABLE_OPTION_FLAGS(_)
+  OVERRIDABLE_OPTION_MACROS(_)                                                 \
+  OVERRIDABLE_OPTION_FLAGS(_)                                                  \
+  _(PathRoot, pathRoot) \
 
 #define EXPORT_OPTION_LIST(_)                                                  \
   _(HeaderFiles, headerFiles)                                                  \
   _(IgnoredHeaders, ignoredHeaders)                                            \
+  _(ExcludedDirectories, excludedDirectories)                                  \
   _(OtherExportMacros, otherExportMacros)                                      \
   OVERRIDABLE_OPTIONS_LIST(_)
 
@@ -70,6 +72,8 @@ struct BaseExportOptions {
   ExportOptions *Owner;
   // optional
   std::vector<std::string> HeaderFiles;
+  // If set appended to start of paths in HeaderFiles
+  std::string PathRoot;
   std::string ExportMacroHeader;
   // optional if a global export macro is defined
   std::string ExportMacro;         
@@ -80,15 +84,17 @@ struct BaseExportOptions {
   std::string ExternCMacro;
   // optional
   std::string ExportTemplateMacro; 
-  // optional used on global variables
+  // optional used on global varibles and optionally on static class variables if
+  // ClassDataMacro is not set
   std::string DataMacro;
-  // optional used on global and static class variables
+  // optional used on static class variables
   std::string ClassDataMacro;
   // optional, This is defined while parsing headers scan for targets for
   // export macros. This should cause the code to not define the export macros
   // so the tool can define them to a clang annotate attribute
   std::string IsGeneratingMacro;
   std::vector<std::string> IgnoredHeaders;
+  std::vector<std::string> ExcludedDirectories;
   std::vector<std::string> IgnoredClasses;
   std::vector<std::string> OtherExportMacros;
   BoolOption ExportExternC;
@@ -104,7 +110,8 @@ struct BaseExportOptions {
   BaseExportOptions() {
   }
 
-  llvm::Error gatherFiles(llvm::StringRef rootDirectory, std::vector<std::string> & files);
+  llvm::StringRef createFullPath(llvm::StringRef path, llvm::SmallString<256> &pathBuff);
+  llvm::Error gatherFiles(std::vector<std::string> &files);
 };
 
 struct HeaderGroupOptions : BaseExportOptions {
@@ -112,7 +119,9 @@ struct HeaderGroupOptions : BaseExportOptions {
   std::string Name;
   // HeaderDirectories or Headers is required
   std::vector<std::string> HeaderDirectories;
-  llvm::Error gatherDirectoryFiles(llvm::StringRef rootDirectory, std::vector<std::string> &files);
+  std::vector<std::string> SourceDirectories;
+  llvm::Error gatherDirectoryFiles(std::vector<std::string> &files);
+  llvm::Error gatherSourceFiles(std::vector<std::string> &files);
 };
 
 typedef llvm::DenseMap<llvm::sys::fs::UniqueID, BaseExportOptions*> FileOptionLookup;
@@ -131,7 +140,7 @@ public:
   static llvm::Error loadFromDirectory(const std::string &path, ExportOptions& options);
 
   void setOverridesAndDefaults(const BaseExportOptions &options);
-  llvm::Error gatherAllFiles(llvm::StringRef rootDirectory, std::vector<std::string> &allFiles, FileOptionLookup &fileOptions);
+  llvm::Error gatherAllFiles(std::vector<std::string> &allFiles, FileOptionLookup &fileOptions);
   std::vector<HeaderGroupOptions>& getGroups() { return Groups; }
 
   HeaderGroupOptions *getGroup(llvm::StringRef name) {
@@ -145,6 +154,12 @@ public:
   clang::format::FormatStyle* getClangFormatStyle();
 
   const std::string &getRootDirectory() { return RootDirectory; }
+  void setRootDirectory(llvm::StringRef RootDirectory) { 
+    this->RootDirectory = RootDirectory; 
+    tryLoadClangFormatFile();
+  }
+  llvm::Error tryLoadClangFormatFile();
+
 private:
   llvm::Error Load(llvm::StringRef text);
   std::string RootDirectory;

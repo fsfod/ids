@@ -1230,7 +1230,7 @@ struct action : clang::ASTFrontendAction {
     }
 
     seenMacros.insert(exportOptions->ExportMacroHeader);
-    OVERRIDABLE_OPTION_STRINGS(DEFINE_EXPORRT_MACRO);
+    OVERRIDABLE_OPTION_MACROS(DEFINE_EXPORRT_MACRO);
     return clang::ASTFrontendAction::BeginInvocation(CI);
   }
 

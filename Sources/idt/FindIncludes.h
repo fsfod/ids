@@ -17,22 +17,37 @@ typedef std::pair<std::string, llvm::StringSet<>> FileIncludeResults;
 class HeaderPathMatcher;
 template<typename KeyT, typename ValueT> class ThreadSafeToolResults;
 
+enum class PathMatchMode {
+  Anywhere,
+  Start,
+  End,
+};
+
 class HeaderPathMatcher {
 public:
-  HeaderPathMatcher() = default;
-  static llvm::Expected<HeaderPathMatcher> create(std::vector<std::string> &pathGlobs, const std::string &rootDirectory = "");
-  llvm::Error addRawPathPatten(llvm::StringRef pathGlob);
+  HeaderPathMatcher()
+    : Inverse(false) { 
+  }
 
+  llvm::Error addPathPatten(llvm::StringRef pathGlob);
+  void addPlainPath(llvm::StringRef Path, PathMatchMode MatchMode = PathMatchMode::Anywhere);
+  llvm::Error addPaths(std::vector<std::string>& pathGlobs, PathMatchMode MatchMode);
+
+  llvm::Error addPath(llvm::StringRef Path, PathMatchMode MatchMode);
   bool match(llvm::StringRef path);
   std::vector<std::string> filterPathList(std::vector<std::string>& paths);
 
 private:
-  llvm::Error addPaths(std::vector<std::string> &pathGlobs, const std::string &rootDirectory);
   llvm::SmallVector<llvm::GlobPattern> pattens;
-  llvm::SmallVector<std::string> PlainStrings;
+  llvm::SmallVector<std::pair<PathMatchMode, std::string>> PlainStrings;
+  bool Inverse;
 };
 
-llvm::Error GatherFilesInDirectory(llvm::StringRef directory, std::vector<std::string> &foundFiles, HeaderPathMatcher *filter);
+typedef bool (PathChecker)(llvm::StringRef Path);
+static std::function<bool(llvm::StringRef)> NopFilter = [](llvm::StringRef Path) {return false; };
+
+bool isHeaderFile(llvm::StringRef Path);
+llvm::Error GatherFilesInDirectory(llvm::StringRef directory, std::vector<std::string> &foundFiles, std::function<bool(llvm::StringRef)> Filter = NopFilter);
 
 llvm::Error runClangToolMultithreaded(clang::tooling::CompilationDatabase &Compilations, clang::tooling::FrontendActionFactory& factory,
                             std::vector<std::string> Files, int threadCount = 0);

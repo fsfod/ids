@@ -90,17 +90,25 @@ Error ExportOptions::Load(StringRef text) {
     group.Owner = this;
   }
 
-  if (!ClangFormatFile.empty()) {
-    SmallString<256> path(ClangFormatFile);
-    sys::fs::make_absolute(RootDirectory, path);
-    ClangFormatStyle = clang::format::getNoStyle();
-    auto err = loadAndParseConfigFile(path, &ClangFormatStyle);
-    if (err) {
-      return createStringError(err, "bad .clang_format file specified in export_options.json");
-    }
-    ClangFormatValid = true;
+  if (auto err = tryLoadClangFormatFile()) {
+    return err;
   }
 
+  return Error::success();
+}
+
+Error ExportOptions::tryLoadClangFormatFile() {
+  if (ClangFormatFile.empty() || ClangFormatValid || RootDirectory.empty())
+    return Error::success();
+
+  SmallString<256> path(ClangFormatFile);
+  sys::fs::make_absolute(RootDirectory, path);
+  ClangFormatStyle = clang::format::getNoStyle();
+
+  if (auto err = loadAndParseConfigFile(path, &ClangFormatStyle))
+    return createStringError(err, "bad .clang_format file specified in export_options.json");
+
+  ClangFormatValid = true;
   return Error::success();
 }
 
@@ -158,10 +166,13 @@ bool fromJSON(const json::Value &E, HeaderGroupOptions &opts, json::Path P) {
   if (!map.mapOptional("headerDirectories", opts.HeaderDirectories))
     return false;
 
+  if (!map.mapOptional("sourceDirectories", opts.SourceDirectories))
+    return false;
+
   if(!fromJSON(E, static_cast<BaseExportOptions&>(opts), P))
     return false;
 
-  if (opts.HeaderFiles.empty() && opts.HeaderDirectories.empty()) {
+  if (opts.HeaderFiles.empty() && opts.HeaderDirectories.empty() && opts.SourceDirectories.empty()) {
     P.report("headerFiles or headerDirectories field must be defined and non empty");
     return false;
   }
@@ -197,39 +208,135 @@ bool fromJSON(const json::Value &E, BaseExportOptions &opts, json::Path P) {
   return true;
 }
 
-Error HeaderGroupOptions::gatherDirectoryFiles(llvm::StringRef rootDirectory, std::vector<std::string> &files) {
+Error HeaderGroupOptions::gatherDirectoryFiles(std::vector<std::string> &files) {
   if (HeaderDirectories.empty())
     return Error::success();
 
   HeaderPathMatcher filter;
 
   if (!IgnoredHeaders.empty()) {
-    auto filterOrErr = HeaderPathMatcher::create(IgnoredHeaders);
-    if (!filterOrErr) {
-      return filterOrErr.takeError();
+    if (auto Err = filter.addPaths(IgnoredHeaders, PathMatchMode::End)) 
+      return Err;
+  }
+
+  if (!ExcludedDirectories.empty()) {
+    llvm::SmallString<256> Patten;
+    for (auto &path : ExcludedDirectories) {
+      Patten.clear();
+      Patten = path;
+
+      // Make sure the path ends in a path separator so we don't partially match a directory name
+      if (Patten.front() == '\\') {
+        Patten[Patten.size() - 1] = '/';
+      } else if (Patten.front() != '\\') {
+        Patten += '/';
+      }
+
+      if (auto Err = filter.addPath(Patten, PathMatchMode::Start))
+        return Err;
     }
-    filter = std::move(filterOrErr.get());
+  }
+
+  bool SkipRootFiles = false;
+  auto FilterFunc = [&](StringRef path) {
+    if (!isHeaderFile(path)) {
+      llvm::outs() << "Skipped non header file: " << path << "\n";
+      return true;
+    }
+    // Skip files in root directory and require them to explicitly be added
+    if (SkipRootFiles && !path.contains('/'))
+      return true;
+    return filter.match(path);
+  };
+
+  llvm::SmallString<256> headerDirectory;
+  // check if you user wanted us to recursively find all headers in our root folder or PathRoot
+  if (HeaderDirectories.size() == 1 && HeaderDirectories[0] == "*") {
+    createFullPath("", headerDirectory);
+    SkipRootFiles = true;
+    if (auto err = GatherFilesInDirectory(headerDirectory, files, FilterFunc))
+      return err;
+  } else {
+    for (auto& dirPath : HeaderDirectories) {
+      createFullPath(dirPath, headerDirectory);
+
+      if (auto err = GatherFilesInDirectory(headerDirectory, files, FilterFunc)) {
+        return err;
+      }
+    }
+  }
+
+  return Error::success();
+}
+
+llvm::Error HeaderGroupOptions::gatherSourceFiles(std::vector<std::string> &files) {
+  if (SourceDirectories.empty())
+    return Error::success();
+
+  HeaderPathMatcher filter;
+
+  if (!ExcludedDirectories.empty()) {
+    llvm::SmallString<256> Patten;
+    for (auto &path : ExcludedDirectories) {
+      Patten.clear();
+      Patten = path;
+
+      // Make sure the path ends in a path separator so we don't partially match a directory name
+      if (Patten.front() == '\\') {
+        Patten[Patten.size() - 1] = '/';
+      } else if (Patten.front() != '\\') {
+        Patten += '/';
+      }
+
+      if (auto Err = filter.addPath(Patten, PathMatchMode::Start))
+        return Err;
+    }
   }
 
   llvm::SmallString<256> headerDirectory;
-  for (auto& dirPath : HeaderDirectories) {
-    headerDirectory.clear();
-    llvm::sys::path::append(headerDirectory, rootDirectory, dirPath);
-    std::replace(headerDirectory.begin(), headerDirectory.end(), '\\', '/');
+  for (auto& dirPath : SourceDirectories) {
+    createFullPath(dirPath, headerDirectory);
 
-    if (auto err = GatherFilesInDirectory(headerDirectory, files, &filter)) {
+    auto FilterFunc = [&](StringRef Path) {
+      if (sys::path::extension(Path) != ".cpp") {
+        llvm::outs() << "Skipped non source file: " << Path << "\n";
+        return true;
+      }
+      return filter.match(Path);
+    };
+
+    if (auto err = GatherFilesInDirectory(headerDirectory, files, FilterFunc)) {
       return err;
     }
   }
   return Error::success();
 }
 
-Error BaseExportOptions::gatherFiles(llvm::StringRef rootDirectory, std::vector<std::string> &files) {
+StringRef BaseExportOptions::createFullPath(StringRef path, SmallString<256> &pathBuff) {
+  pathBuff.clear();
+
+  StringRef rootDirectory = Owner->getRootDirectory();
+
+  if (!PathRoot.empty()) {
+    sys::path::append(pathBuff, rootDirectory, PathRoot, path);
+  } else {
+    sys::path::append(pathBuff, rootDirectory, path);
+  }
+
+  std::replace(pathBuff.begin(), pathBuff.end(), '\\', '/');
+  
+  size_t EndPathLength = path.size();
+  size_t PathStart = pathBuff.size() - EndPathLength;
+  if (pathBuff[PathStart] == '//')
+    PathStart++;
+
+  return pathBuff.substr(PathStart, EndPathLength);
+}
+
+Error BaseExportOptions::gatherFiles(std::vector<std::string> &files) {
   SmallString<256> pathBuff;
   for (auto& path : HeaderFiles) {
-    pathBuff.clear();
-    sys::path::append(pathBuff, rootDirectory, path);
-    std::replace(pathBuff.begin(), pathBuff.end(), '\\', '/');
+    createFullPath(path, pathBuff);
 
     if (!sys::fs::exists(pathBuff)) {
       llvm::errs() << "File '" << path << "' in export_options.json headerFiles field does not exist.\n";
@@ -247,11 +354,10 @@ Error BaseExportOptions::gatherFiles(llvm::StringRef rootDirectory, std::vector<
   return Error::success();
 }
 
-Error ExportOptions::gatherAllFiles(llvm::StringRef rootDirectory, std::vector<std::string> &allFiles, FileOptionLookup& fileOptions) {
+Error ExportOptions::gatherAllFiles(std::vector<std::string> &allFiles, FileOptionLookup& fileOptions) {
   clang::FileManager *FileMgr =
     new clang::FileManager(clang::FileSystemOptions(), llvm::vfs::getRealFileSystem());
 
-  llvm::SmallString<256> headerDirectory;
   std::vector<std::string> files;
 
   for (HeaderGroupOptions &group : Groups) {
@@ -259,7 +365,7 @@ Error ExportOptions::gatherAllFiles(llvm::StringRef rootDirectory, std::vector<s
       continue;
 
     files.clear();
-    if (auto err = group.gatherDirectoryFiles(rootDirectory, files)) {
+    if (auto err = group.gatherDirectoryFiles(files)) {
       return err;
     }
 
@@ -273,13 +379,43 @@ Error ExportOptions::gatherAllFiles(llvm::StringRef rootDirectory, std::vector<s
     }
   }
 
+  StringMap<HeaderGroupOptions*> sourceFiles;
+  std::vector<std::string> SourceFileList;
+
+  for (int i = 0; i < Groups.size(); i++) {
+    HeaderGroupOptions &group = Groups[i];
+    if (group.Disabled)
+      continue;
+
+    files.clear();
+    if (auto err = group.gatherSourceFiles(files)) {
+      return err;
+    }
+
+    for (auto &path : files) {
+      SourceFileList.push_back(path);
+      sourceFiles.insert_or_assign(std::move(path), &group);
+    }
+  }
+
+  if (auto Err = SoftFilterPotentialExports(SourceFileList))
+    return Err;
+
+  for (auto& s : SourceFileList) {
+    auto fileRef = FileMgr->getFileRef(s);
+    if (!fileRef)
+      return createStringError("Failed to get FileRef for '" + s + "': " + llvm::toString(fileRef.takeError()));
+
+    fileOptions[fileRef->getUniqueID()] = sourceFiles[s];
+    allFiles.push_back(s);
+  }
   // Explicitly specified header files options should override any options from a HeaderDirectory group
   for (HeaderGroupOptions &group : Groups) {
     if (group.Disabled)
       continue;
 
     files.clear();
-    Error err = group.gatherFiles(rootDirectory, files);
+    Error err = group.gatherFiles(files);
     if (err)
       return err;
 
