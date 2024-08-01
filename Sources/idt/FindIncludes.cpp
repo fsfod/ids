@@ -491,3 +491,47 @@ void BufferedDiagnostics::PrintDiagnostic(DiagnosticOptions &Options) {
     Renderer.emitStoredDiagnostic(diag);
   }
 }
+
+bool HasPotentialExports(MemoryBuffer &file) {
+  StringRef buffer = file.getBuffer();
+  return buffer.contains("extern") || buffer.contains("cl::opt") || buffer.contains("template");
+}
+
+Error SoftFilterPotentialExports(std::vector<std::string>& PathList, int ThreadCount) {
+  std::mutex ResultMutex;
+  std::vector<std::error_code> ErrorList;
+  std::vector<std::string> HasExportables;
+
+  {
+    llvm::DefaultThreadPool Pool(llvm::hardware_concurrency(ThreadCount));
+    for (std::string File : PathList) {
+      Pool.async(
+        [&](std::string& Path) {
+          auto buffer = MemoryBuffer::getFile(Path, false, false, false);
+          if (!buffer) {
+            std::unique_lock<std::mutex> LockGuard(ResultMutex);
+            ErrorList.emplace_back(buffer.getError());
+            llvm::errs() << "Failed to open " << Path << " to check for missing exports: " << buffer.getError().message() << "\n";
+            return;
+          } else {
+            std::unique_lock<std::mutex> LockGuard(ResultMutex);
+            llvm::outs() << "Scanning: " << Path << " for potential exports\n";
+          }
+
+          if (HasPotentialExports(*buffer.get())) {
+            std::unique_lock<std::mutex> LockGuard(ResultMutex);
+            HasExportables.emplace_back(Path);
+          }
+      }, File);
+    }
+    // Make sure all tasks have finished before resetting the working directory.
+    Pool.wait();
+  }
+
+  if (!ErrorList.empty()) {
+    return createStringError("Scanning source files failed, " + ErrorList.front().message());
+  }
+
+  PathList = HasExportables;
+  return Error::success();
+}

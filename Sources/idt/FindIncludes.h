@@ -40,6 +40,7 @@ llvm::Error runClangToolMultithreaded(clang::tooling::CompilationDatabase &Compi
 // Create a list of headers that if we start a translation unit from each would visit all the headers of the original list
 llvm::Error getRootHeaders(clang::tooling::CommonOptionsParser & options, std::vector<std::string> files, std::vector<std::string>& rootHeaders);
 
+llvm::Error SoftFilterPotentialExports(std::vector<std::string> &PathList, int ThreadCount = 0);
 
 typedef ThreadSafeToolResults<std::string, std::unique_ptr<llvm::StringSet<>>> HeaderResults;
 
