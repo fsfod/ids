@@ -1469,7 +1469,7 @@ int main(int argc, char *argv[]) {
     llvm::SmallString<256> headerDirectory;
     std::vector<std::string> files;
 
-    if (auto err = exportOptions.gatherAllFiles(root_header_directory, sourcePathList, fileOptions)) {
+    if (auto err = exportOptions.gatherAllFiles(sourcePathList, fileOptions)) {
       llvm::errs() << err;
       return EXIT_FAILURE;
     }
