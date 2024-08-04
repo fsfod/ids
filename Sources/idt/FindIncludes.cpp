@@ -488,6 +488,26 @@ Error HeaderPathMatcher::addPaths(std::vector<std::string> &pathGlobs, PathMatch
   return Error::success();
 }
 
+llvm::Error HeaderPathMatcher::addDirectoryRoots(std::vector<std::string> &Directories) {
+  llvm::SmallString<256> Patten;
+
+  for (auto &path : Directories) {
+    Patten.clear();
+    Patten = path;
+    // Make sure the path ends in a path separator so we don't partially match a directory name
+    if (Patten.front() == '\\') {
+      Patten[Patten.size() - 1] = '/';
+    } else if (Patten.front() != '\\') {
+      Patten += '/';
+    }
+
+    if (auto Err = addPath(Patten, PathMatchMode::Start))
+      return Err;
+  }
+
+  return Error::success();
+}
+
 Error HeaderPathMatcher::addPath(StringRef Path, PathMatchMode MatchMode) {
   llvm::SmallString<256> normalizedPath;
   normalizedPath = Path;

@@ -215,39 +215,24 @@ bool fromJSON(const json::Value &E, BaseExportOptions &opts, json::Path P) {
   return true;
 }
 
-Error HeaderGroupOptions::gatherDirectoryFiles(std::vector<std::string> &files) {
-  if (HeaderDirectories.empty())
-    return Error::success();
-
+Error HeaderGroupOptions::gatherDirectoryFiles(std::vector<std::string> &files, bool sourceFiles) {
+  auto &DirList = sourceFiles ? SourceDirectories : HeaderDirectories;
   HeaderPathMatcher filter;
 
-  if (!IgnoredHeaders.empty()) {
-    if (auto Err = filter.addPaths(IgnoredHeaders, PathMatchMode::End)) 
+  if (!IgnoredFiles.empty()) {
+    if (auto Err = filter.addPaths(IgnoredFiles, PathMatchMode::End)) 
       return Err;
   }
-
-  if (!ExcludedDirectories.empty()) {
-    llvm::SmallString<256> Patten;
-    for (auto &path : ExcludedDirectories) {
-      Patten.clear();
-      Patten = path;
-
-      // Make sure the path ends in a path separator so we don't partially match a directory name
-      if (Patten.front() == '\\') {
-        Patten[Patten.size() - 1] = '/';
-      } else if (Patten.front() != '\\') {
-        Patten += '/';
-      }
-
-      if (auto Err = filter.addPath(Patten, PathMatchMode::Start))
-        return Err;
-    }
-  }
+  filter.addDirectoryRoots(ExcludedDirectories);
 
   bool SkipRootFiles = false;
+
   auto FilterFunc = [&](StringRef path) {
-    if (!isHeaderFile(path)) {
+    if (!sourceFiles && !isHeaderFile(path)) {
       llvm::outs() << "Skipped non header file: " << path << "\n";
+      return true;
+    } else if(sourceFiles && sys::path::extension(path) != ".cpp") {
+      llvm::outs() << "Skipped non source file: " << path << "\n";
       return true;
     }
     // Skip files in root directory and require them to explicitly be added
@@ -258,13 +243,13 @@ Error HeaderGroupOptions::gatherDirectoryFiles(std::vector<std::string> &files) 
 
   llvm::SmallString<256> headerDirectory;
   // check if you user wanted us to recursively find all headers in our root folder or PathRoot
-  if (HeaderDirectories.size() == 1 && HeaderDirectories[0] == "*") {
+  if (DirList.size() == 1 && DirList[0] == "*") {
     createFullPath("", headerDirectory);
     SkipRootFiles = true;
     if (auto err = GatherFilesInDirectory(headerDirectory, files, FilterFunc))
       return err;
   } else {
-    for (auto& dirPath : HeaderDirectories) {
+    for (auto& dirPath : DirList) {
       createFullPath(dirPath, headerDirectory);
 
       if (auto err = GatherFilesInDirectory(headerDirectory, files, FilterFunc)) {
@@ -280,43 +265,7 @@ llvm::Error HeaderGroupOptions::gatherSourceFiles(std::vector<std::string> &file
   if (SourceDirectories.empty())
     return Error::success();
 
-  HeaderPathMatcher filter;
-
-  if (!ExcludedDirectories.empty()) {
-    llvm::SmallString<256> Patten;
-    for (auto &path : ExcludedDirectories) {
-      Patten.clear();
-      Patten = path;
-
-      // Make sure the path ends in a path separator so we don't partially match a directory name
-      if (Patten.front() == '\\') {
-        Patten[Patten.size() - 1] = '/';
-      } else if (Patten.front() != '\\') {
-        Patten += '/';
-      }
-
-      if (auto Err = filter.addPath(Patten, PathMatchMode::Start))
-        return Err;
-    }
-  }
-
-  llvm::SmallString<256> headerDirectory;
-  for (auto& dirPath : SourceDirectories) {
-    createFullPath(dirPath, headerDirectory);
-
-    auto FilterFunc = [&](StringRef Path) {
-      if (sys::path::extension(Path) != ".cpp") {
-        llvm::outs() << "Skipped non source file: " << Path << "\n";
-        return true;
-      }
-      return filter.match(Path);
-    };
-
-    if (auto err = GatherFilesInDirectory(headerDirectory, files, FilterFunc)) {
-      return err;
-    }
-  }
-  return Error::success();
+  return gatherDirectoryFiles(files, true);
 }
 
 StringRef BaseExportOptions::createFullPath(StringRef path, SmallString<256> &pathBuff) {
@@ -340,7 +289,7 @@ StringRef BaseExportOptions::createFullPath(StringRef path, SmallString<256> &pa
   return pathBuff.substr(PathStart, EndPathLength);
 }
 
-Error BaseExportOptions::gatherFiles(std::vector<std::string> &files) {
+Error BaseExportOptions::getHeaderFiles(std::vector<std::string> &files) {
   SmallString<256> pathBuff;
   for (auto& path : HeaderFiles) {
     createFullPath(path, pathBuff);
@@ -372,7 +321,7 @@ Error ExportOptions::gatherAllFiles(std::vector<std::string> &allFiles, FileOpti
       continue;
 
     files.clear();
-    if (auto err = group.gatherDirectoryFiles(files)) {
+    if (auto err = group.gatherDirectoryFiles(files, false)) {
       return err;
     }
 
@@ -422,7 +371,7 @@ Error ExportOptions::gatherAllFiles(std::vector<std::string> &allFiles, FileOpti
       continue;
 
     files.clear();
-    Error err = group.gatherFiles(files);
+    Error err = group.getHeaderFiles(files);
     if (err)
       return err;
 

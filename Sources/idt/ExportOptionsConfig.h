@@ -49,7 +49,7 @@ class ExportOptions;
 
 #define EXPORT_OPTION_LIST(_)                                                  \
   _(HeaderFiles, headerFiles)                                                  \
-  _(IgnoredHeaders, ignoredHeaders)                                            \
+  _(IgnoredFiles, ignoredFiles)                                                \
   _(ExcludedDirectories, excludedDirectories)                                  \
   _(OtherExportMacros, otherExportMacros)                                      \
   OVERRIDABLE_OPTIONS_LIST(_)
@@ -93,7 +93,7 @@ struct BaseExportOptions {
   // export macros. This should cause the code to not define the export macros
   // so the tool can define them to a clang annotate attribute
   std::string IsGeneratingMacro;
-  std::vector<std::string> IgnoredHeaders;
+  std::vector<std::string> IgnoredFiles;
   std::vector<std::string> ExcludedDirectories;
   std::vector<std::string> IgnoredClasses;
   std::vector<std::string> OtherExportMacros;
@@ -111,7 +111,7 @@ struct BaseExportOptions {
   }
 
   llvm::StringRef createFullPath(llvm::StringRef path, llvm::SmallString<256> &pathBuff);
-  llvm::Error gatherFiles(std::vector<std::string> &files);
+  llvm::Error getHeaderFiles(std::vector<std::string> &files);
 };
 
 struct HeaderGroupOptions : BaseExportOptions {
@@ -120,7 +120,7 @@ struct HeaderGroupOptions : BaseExportOptions {
   // HeaderDirectories or Headers is required
   std::vector<std::string> HeaderDirectories;
   std::vector<std::string> SourceDirectories;
-  llvm::Error gatherDirectoryFiles(std::vector<std::string> &files);
+  llvm::Error gatherDirectoryFiles(std::vector<std::string> &files, bool soureceFiles);
   llvm::Error gatherSourceFiles(std::vector<std::string> &files);
 };
 

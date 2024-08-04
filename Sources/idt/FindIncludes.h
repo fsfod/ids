@@ -32,6 +32,7 @@ public:
   llvm::Error addPathPatten(llvm::StringRef pathGlob);
   void addPlainPath(llvm::StringRef Path, PathMatchMode MatchMode = PathMatchMode::Anywhere);
   llvm::Error addPaths(std::vector<std::string>& pathGlobs, PathMatchMode MatchMode);
+  llvm::Error addDirectoryRoots(std::vector<std::string>& paths);
 
   llvm::Error addPath(llvm::StringRef Path, PathMatchMode MatchMode);
   bool match(llvm::StringRef path);

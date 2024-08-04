@@ -1400,7 +1400,7 @@ int main(int argc, char *argv[]) {
     llvm::logAllUnhandledErrors(std::move(options.takeError()), llvm::errs());
     return EXIT_FAILURE;
   }
-  baseOptions.IgnoredHeaders = ignored_headers;
+  baseOptions.IgnoredFiles = ignored_headers;
 
   if (externc_export_macro.getValue() != "") {
     baseOptions.ExportExternC = true;
