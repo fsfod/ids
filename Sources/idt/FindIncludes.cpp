@@ -349,7 +349,9 @@ void ClangToolRunner::logDiagnostics(BufferedDiagnostics &buffer) {
 
 std::mutex &ClangToolRunner::getMutex() { return TUMutex; }
 
-bool ClangToolRunner::hasErrors() { return !ErrorMsg.empty(); }
+bool ClangToolRunner::hasErrors() { 
+  return !FailingFiles.empty(); 
+}
 
 
 Error runClangToolMultithreaded(CompilationDatabase &Compilations, FrontendActionFactory& factory, std::vector<std::string> Files, int threadCount) {
