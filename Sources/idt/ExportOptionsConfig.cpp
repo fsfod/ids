@@ -38,6 +38,13 @@ Error ExportOptions::loadFromDirectory(const std::string &path, ExportOptions& o
   return loadFromFile(pathBuf, options);
 }
 
+bool ExportOptions::directoryHasExportConfig(const std::string &path) {
+  SmallString<256> pathBuf(path);
+  sys::path::append(pathBuf, "export_options.json");
+
+  return sys::fs::is_regular_file(pathBuf);
+}
+
 clang::format::FormatStyle* ExportOptions::getClangFormatStyle() {
  return ClangFormatValid ? &ClangFormatStyle : NULL;
 }

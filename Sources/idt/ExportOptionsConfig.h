@@ -138,6 +138,7 @@ public:
 
   static llvm::Error loadFromFile(llvm::StringRef path, ExportOptions& options);
   static llvm::Error loadFromDirectory(const std::string &path, ExportOptions& options);
+  static bool directoryHasExportConfig(const std::string &path);
 
   void setOverridesAndDefaults(const BaseExportOptions &options);
   llvm::Error gatherAllFiles(std::vector<std::string> &allFiles, FileOptionLookup &fileOptions);

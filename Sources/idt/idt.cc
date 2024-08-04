@@ -124,6 +124,12 @@ root_header_directory("header-dir",
   llvm::cl::value_desc("define"),
   llvm::cl::cat(idt::category));
 
+llvm::cl::opt<std::string>
+export_config_path("export-config",
+  llvm::cl::desc("Path of export config file"),
+  llvm::cl::value_desc("define"),
+  llvm::cl::cat(idt::category));
+
 llvm::cl::list<std::string>
 ignored_headers("header-ignore",
   llvm::cl::desc("Ignore one or more header files"),
@@ -1347,13 +1353,21 @@ int main(int argc, char *argv[]) {
 
   } else if (!root_header_directory.empty()) {
     singleFile = false;
-    auto error = ExportOptions::loadFromDirectory(root_header_directory, exportOptions);
-    exportOptions.setOverridesAndDefaults(baseOptions);
+
+    llvm::Error error = llvm::Error::success();
+    if (export_config_path.empty()) {
+      error = ExportOptions::loadFromDirectory(root_header_directory, exportOptions);
+    } else if(ExportOptions::directoryHasExportConfig(root_header_directory)) {
+      error = ExportOptions::loadFromFile(export_config_path, exportOptions);
+      if(!error)
+        exportOptions.setRootDirectory(root_header_directory);
+    }
 
     if (error) {
       llvm::errs() << "Reading export_config.json failed: " << error;
       return EXIT_FAILURE;
     }
+    exportOptions.setOverridesAndDefaults(baseOptions);
     
     llvm::SmallString<256> headerDirectory;
     std::vector<std::string> files;
