@@ -293,7 +293,8 @@ public:
 
     auto *CTSD = clang::dyn_cast<clang::ClassTemplateSpecializationDecl>(D);
     // Process extern template declarations separately when we visit them directly
-    if (CTSD && CTSD->getTemplateSpecializationKind() == clang::TSK_ExplicitInstantiationDeclaration) {
+    if (CTSD && (CTSD->getTemplateSpecializationKind() == clang::TSK_ExplicitInstantiationDeclaration || 
+                CTSD->getTemplateSpecializationKind() == clang::TSK_ExplicitInstantiationDefinition)) {
       return true;
     }
 
@@ -543,40 +544,64 @@ public:
     const auto filename = location.getFileEntryRef()->getName();
     int line = location.getLineNumber();
 
-    if (D->getTemplateSpecializationKind() != clang::TSK_ExplicitInstantiationDeclaration)
+    auto Kind = D->getTemplateSpecializationKind();
+    std::string exportMacro;
+
+    bool isDefinition = Kind == clang::TSK_ExplicitInstantiationDefinition;
+
+    if ((isDefinition && isMainFileAHeader) || Kind != clang::TSK_ExplicitInstantiationDefinition )
       return true;
 
     if (ShouldSkipDeclaration(D))
       return true;
 
-    if (!D->getExternKeywordLoc().isValid()) {
-      LogSkippedDecl(D, location, "extern location is not valid");
-      return true;
-    }
+    clang::SourceRange defRange;
 
-    if (!D->hasExternalFormalLinkage()) {
-      llvm::dbgs() << "NO external formal linkage\n";
-      return true;
-    }
+    if (isDefinition) {
+      exportMacro = options.ExportTemplateMacro;
+      defRange = clang::SourceRange(D->getTemplateKeywordLoc(), D->getLocation());
+    } else {
+      exportMacro = options.ExternTemplateMacro;
+      if (!D->getExternKeywordLoc().isValid()) {
+        LogSkippedDecl(D, location, "extern location is not valid");
+        return true;
+      }
 
-    std::string exportMacro = options.ExternTemplateMacro;
+      if (!D->hasExternalFormalLinkage()) {
+        llvm::dbgs() << "NO external formal linkage\n";
+        return true;
+      }
+
+      defRange = clang::SourceRange(D->getExternKeywordLoc(), D->getLocation());
+    }
 
     // TODO is there a better way todo this
-    auto sourceText = GetSourceTextForRange(clang::SourceRange(D->getExternKeywordLoc(), D->getLocation()));
+    auto sourceText = GetSourceTextForRange(defRange);
     // Don't apply the macro if it already has one
     if (sourceText.contains(exportMacro)) {
       return true;
     }
 
-    size_t keywordOffset = sourceText.find(D->isStruct() ? "struct" : "class");
+    clang::SourceLocation insertion_point ;
 
-    if (keywordOffset == llvm::StringRef::npos) {
-      llvm::errs() << "Failed to find class or struct keyword for extern template declaration " << sourceText;
-      return true;
+    if (isDefinition) {
+      if (!TryGetNestedNameStartLoc(D, insertion_point)) {
+        insertion_point = GetFullExpansionLoc(D->clang::NamedDecl::getLocation());
+      } else {
+        insertion_point = GetFullExpansionLoc(insertion_point);
+      }
+    } else {
+      size_t keywordOffset = sourceText.find(D->isStruct() ? "struct" : "class");
+
+      if (keywordOffset == llvm::StringRef::npos) {
+        llvm::errs() << "Failed to find class or struct keyword for extern template declaration " << sourceText;
+        return true;
+      }
+
+      // Insert one space after the keyword
+      keywordOffset += D->isStruct() ? 7 : 6;
+      insertion_point = D->getExternKeywordLoc().getLocWithOffset(keywordOffset);
     }
-    // Insert one space after the keyword
-    keywordOffset += D->isStruct() ? 7 : 6;
-    auto insertion_point = D->getExternKeywordLoc().getLocWithOffset(keywordOffset);
 
     unexported_public_interface(location)
       << D
@@ -908,6 +933,75 @@ public:
 
   void SetSema(clang::Sema& sema) {
     this->sema = &sema;
+  }
+
+  // Copied from clang-tidy's LexerUtils.cpps
+  std::pair<clang::Token, clang::SourceLocation>
+    getPreviousTokenAndStart(clang::SourceLocation Location, bool SkipComments) {
+    clang::Token Token;
+    Token.setKind(clang::tok::unknown);
+
+    Location = Location.getLocWithOffset(-1);
+    if (Location.isInvalid())
+      return { Token, Location };
+
+    auto StartOfFile = source_manager_.getLocForStartOfFile(source_manager_.getFileID(Location));
+    while (Location != StartOfFile) {
+      Location = clang::Lexer::GetBeginningOfToken(Location, source_manager_, context_.getLangOpts());
+      if (!clang::Lexer::getRawToken(Location, Token, source_manager_, context_.getLangOpts()) &&
+        (!SkipComments || !Token.is(clang::tok::comment))) {
+        break;
+      }
+      Location = Location.getLocWithOffset(-1);
+    }
+    return { Token, Location };
+  }
+
+  clang::Token getPreviousToken(clang::SourceLocation Location, bool SkipComments) {
+    auto [Token, Start] =
+      getPreviousTokenAndStart(Location, SkipComments);
+    return Token;
+  }
+
+  bool TryGetNestedNameStartLoc(clang::Decl *D, clang::SourceLocation &nameStart) {
+    auto *TD = clang::dyn_cast<clang::TagDecl>(D);
+    if (!TD)
+      return false;
+
+    auto *nestedName = TD->getQualifier();
+    auto fullloc = GetFileLocation(TD->getQualifierLoc().getBeginLoc());
+    
+    auto SemanticDC = D->getDeclContext();
+    auto lexialCtx = D->getLexicalDeclContext();
+
+    // Check edge case of no nested name value, but the template still has a namespace prefix.
+    // We can infer it from the semantic Delcontext being different to the Semantic one DC.
+    // The LexicalDC will probably be a global namespace
+    if (!nestedName && SemanticDC != lexialCtx && SemanticDC->isNamespace()) {
+     auto tokenAndLoc = getPreviousTokenAndStart(TD->clang::NamedDecl::getLocation(), true);
+     if (tokenAndLoc.first.getKind() == clang::tok::coloncolon) {
+       std::pair<clang::Token, clang::SourceLocation> prev = tokenAndLoc;
+       do {
+         tokenAndLoc = prev;
+         prev = getPreviousTokenAndStart(tokenAndLoc.second.getLocWithOffset(-1), true);
+       } while ((prev.first.getKind() == clang::tok::raw_identifier && tokenAndLoc.first.getKind() == clang::tok::coloncolon) ||
+                (prev.first.getKind() == clang::tok::coloncolon && tokenAndLoc.first.getKind() == clang::tok::raw_identifier));
+
+       if (tokenAndLoc.first.getKind() != clang::tok::raw_identifier)
+         return false;
+       nameStart = tokenAndLoc.second;
+       return true;
+     }
+    }
+
+    // Check if the decl name is prefixed with a type or namespace 
+    if (!nestedName)
+      return false;
+
+    // Use namespace prefix starting location to insert at instead of the 
+    // normal class name location that skips the name prefixes
+    nameStart = TD->getQualifierLoc().getBeginLoc();
+    return true;
   }
 
   clang::VarDecl *FirstUnexportedStaticField(clang::CXXRecordDecl *D) {
