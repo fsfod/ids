@@ -917,7 +917,7 @@ public:
     std::string &exportMacro = options.ExportMacro;
     if (FD->isExternC()) {
       // Don't export extern "C" declared functions by default
-      if (!(options.ExportExternC)) {
+      if (options.ExportExternC != true) {
         return true;
       }
       exportMacro = options.ExternCMacro;
@@ -1398,8 +1398,7 @@ int main(int argc, char *argv[]) {
   }
   baseOptions.IgnoredHeaders = ignored_headers;
 
-  if (externc_export_macro.getValue() == "") {
-    externc_export_macro = export_macro.getValue();
+  if (externc_export_macro.getValue() != "") {
     baseOptions.ExportExternC = true;
   }
 
