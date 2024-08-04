@@ -1343,7 +1343,11 @@ struct action : clang::ASTFrontendAction {
     CI.getFrontendOpts().SkipFunctionBodies = skipFunctionBodies;
     clang::DiagnosticsEngine &Diag = getCompilerInstance().getDiagnostics();
     Diag.setSeverity(clang::diag::warn_unused_private_field, clang::diag::Severity::Ignored, clang::SourceLocation());
-
+    Diag.setSeverity(clang::diag::warn_unused_function, clang::diag::Severity::Ignored, clang::SourceLocation());
+    Diag.setSeverity(clang::diag::warn_unused_variable, clang::diag::Severity::Ignored, clang::SourceLocation());
+    Diag.setSeverity(clang::diag::warn_unused_const_variable, clang::diag::Severity::Ignored, clang::SourceLocation());
+    Diag.setSeverity(clang::diag::warn_unused_private_field, clang::diag::Severity::Ignored, clang::SourceLocation());
+    Diag.setSeverity(clang::diag::warn_unneeded_internal_decl, clang::diag::Severity::Ignored, clang::SourceLocation());
     return std::make_unique<idt::consumer>(CI.getASTContext(), *exportOptions, skipFunctionBodies, owner);
   }
 };
