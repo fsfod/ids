@@ -664,6 +664,10 @@ public:
     clang::QualType type = VD->getType();
 
     if (!VD->hasExternalStorage()) {
+      // By default exporting global variable definitions is opt in
+      if (!options.ExportGlobalVariableDefs)
+        return true;
+
       if (!VD->hasGlobalStorage() || type.isConstQualified() || VD->getStorageClass() == clang::SC_Static)
         return true;
       // Only annotate global variable definitions in source files not headers
