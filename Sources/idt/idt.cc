@@ -825,6 +825,8 @@ public:
     if (isAlreadyExported(D, true))
       return;
 
+    if(ShouldSkipDeclaration(D, true, D->getPointOfInstantiation()))
+
     if (debuglog) {
       llvm::outs() << "  Inst: " << instLocation.path << ":" << instLocation.line << '\n';
       llvm::outs() << "    \"" << lineText << '\"\n';
@@ -836,6 +838,10 @@ public:
     if (!LexExternTemplate(lexer, insert_point)) {
       llvm::outs() << "Failed to find start of guessed extern function template declaration for" << D->getName() << "in "
         << instLocation.path << ":" << instLocation.line << '\n';
+      return;
+    }
+
+    if (lineText.find(options.ExternTemplateMacro) != std::string::npos) {
       return;
     }
 
