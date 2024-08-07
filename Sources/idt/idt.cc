@@ -549,7 +549,7 @@ public:
 
     bool isDefinition = Kind == clang::TSK_ExplicitInstantiationDefinition;
 
-    if ((isDefinition && isMainFileAHeader) || Kind != clang::TSK_ExplicitInstantiationDefinition )
+    if ((isDefinition && isMainFileAHeader) || Kind != clang::TSK_ExplicitInstantiationDeclaration)
       return true;
 
     if (ShouldSkipDeclaration(D))
