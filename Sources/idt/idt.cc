@@ -444,8 +444,10 @@ public:
         if (Atrr->isInherited() || Atrr->isDeclspecAttribute())
           continue;
 
-        if (!Atrr->isGNUAttribute() && !Atrr->isCXX11Attribute())
+        auto *align = clang::dyn_cast<clang::AlignedAttr>(Atrr);
+        if(!Atrr->isGNUAttribute() && !Atrr->isCXX11Attribute() && !(align && align->isKeywordAttribute()))
           continue;
+
         clang::SourceRange range = Atrr->getRange();
 
         auto start = GetFullExpansionLoc(range.getBegin());
@@ -457,14 +459,17 @@ public:
 
       if (attrStart != maxStart) {
         // If the attribute is expanded from macro location won't be offset to attribute name
-        if (firstAttr->getLoc().isMacroID()) {
+        if (firstAttr->getLoc().isMacroID() || firstAttr->isKeywordAttribute()) {
           insertion_point = attrStart;
         } else if (firstAttr->isGNUAttribute()) {
           // __attribute__((
           insertion_point = attrStart.getLocWithOffset(-15);
-        } else {
+        } else if(firstAttr->isCXX11Attribute()) {
           // [[
           insertion_point = attrStart.getLocWithOffset(-2);
+        } else {
+          LogSkippedDecl(D, location, "' unhandled attribute type to adjust insertion point for");
+          return;
         }
       }
     }
