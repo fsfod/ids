@@ -263,6 +263,7 @@ public:
     // members, and we need to ensure it's deleted earlier than Compiler. So we
     // pass it to an std::unique_ptr declared after the Compiler variable.
     std::unique_ptr<FrontendAction> ScopedToolAction(create());
+    DiagBuffer.setCurrentAction(ScopedToolAction.get());
 
     // Create the compiler's actual diagnostics engine.
     // &DiagBuffer
