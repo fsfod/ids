@@ -500,6 +500,14 @@ public:
         continue;
 
       if (Atrr->isGNUAttribute() || Atrr->isCXX11Attribute()) {
+        auto attribLoc = GetFullExpansionLoc(Atrr->getLoc());
+
+        // If the attribute is after the parameters next to the opening brace
+        // like this: char *getTraitName(TypeTrait T) __attribute__((__pure__));
+        // we have to keep the export macro before the return type
+        if (attribLoc > location) {
+          continue;
+        }
         hasAttributes = true;
         break;
       }      
