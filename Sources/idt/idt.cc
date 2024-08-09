@@ -625,10 +625,15 @@ public:
     return true;
   }
 
-  bool ShouldSkipDeclaration(clang::Decl *D, bool allowTemplateDec = false) {
-    clang::FullSourceLoc location = get_location(D);
+  bool ShouldSkipDeclaration(clang::Decl *D, bool allowTemplateDec = false, clang::SourceLocation location = clang::SourceLocation()) {
+    clang::FullSourceLoc fullLocation;
+    if (location.isInvalid()) {
+      fullLocation = get_location(D);
+    } else {
+      fullLocation = context_.getFullLoc(location);
+    }
 
-    if (isLocationIgnored(location, D->getKind()))
+    if (isLocationIgnored(fullLocation, D->getKind()))
       return true;
 
     if (location.isMacroID())
