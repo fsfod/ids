@@ -273,7 +273,7 @@ public:
   }
 
   bool VisitCXXRecordDecl(clang::CXXRecordDecl *D) {
-    if (D->isEnum())
+    if (D->isEnum() || !isMainFileAHeader)
       return true;
 
     // We won't visit some forward declared classes again that get a definition in same translation unit
