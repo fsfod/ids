@@ -814,13 +814,32 @@ public:
         auto specKind = RD->getTemplateSpecializationKind();
         if (specKind == clang::TSK_ExplicitInstantiationDeclaration) {
           VisitExternFunctionTemplate(RD);
-        } else if (specKind == clang::TSK_ExplicitInstantiationDefinition && isInsideMainFile(RD->getPointOfInstantiation())){
-          continue;
+        } else if (specKind == clang::TSK_ExplicitInstantiationDefinition){
+          VisitFunctionTemplateDefInstantiation(RD);
         }
       }
     }
 
     return true;
+  }
+
+  void VisitFunctionTemplateDefInstantiation(clang::FunctionDecl *D) {
+
+    auto instLocation = GetFileLocation(D->getPointOfInstantiation());
+    auto location = GetFileLocation(D->getLocation());
+
+    if(isMainFileAHeader || ShouldSkipDeclaration(D, true, D->getPointOfInstantiation()))
+      return;
+
+    if (isAlreadyExported(D, true))
+      return;
+    D->dumpColor();
+
+    clang::SourceLocation insert_point = D->getLocation();
+
+    unexported_public_interface(D->getPointOfInstantiation())
+      << D
+      << clang::FixItHint::CreateInsertion(insert_point, options.ExportTemplateMacro + " ");
   }
 
   void VisitExternFunctionTemplate(clang::FunctionDecl *D) {
