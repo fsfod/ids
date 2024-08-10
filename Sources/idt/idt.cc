@@ -695,11 +695,20 @@ public:
       }
     }
 
-
     auto name = type.getAsString();
 
     if (!isMainFileAHeader && name.find("opt") == std::string::npos) {
-      return true;
+      bool hasExtern = false;
+      // Check if previous declarations of the variable that would be in a header has a export macro already applied
+      // which implicitly requires us to also add a export macro to definition of the variable
+      for (auto *V : VD->redecls()) {
+        if (V->hasExternalStorage() && isAlreadyExported(V, true)) {
+          hasExtern = true;
+          break;
+        }
+      }
+      if(!hasExtern)
+        return true;
     }
 
     ExportVariable(VD);
