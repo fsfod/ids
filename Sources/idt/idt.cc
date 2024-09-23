@@ -692,7 +692,7 @@ public:
       if (!options.ExportGlobalVariableDefs)
         return true;
 
-      if (!VD->hasGlobalStorage() || type.isConstQualified() || VD->getStorageClass() == clang::SC_Static)
+      if (!VD->hasGlobalStorage() || VD->getStorageClass() == clang::SC_Static)
         return true;
       // Only annotate global variable definitions in source files not headers
       if (isMainFileAHeader) {
