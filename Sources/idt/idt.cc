@@ -1505,6 +1505,8 @@ int main(int argc, char *argv[]) {
       }
     }
 
+    SoftFilterPotentialExports(sourcePathList);
+
     if (sourcePathList.empty()) {
       llvm::errs() << "No paths matched by compilation database path globs\n";
       return EXIT_FAILURE;
