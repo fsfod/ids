@@ -1553,6 +1553,16 @@ int main(int argc, char *argv[]) {
   ClangToolRunner runner;
   llvm::Error err = runner.runTool(*InferedDB.get(), factory, sourcePathList, thread_parallelism);
 
+  // If the user has enabled interactive mode list the files that will be modified
+  if (interactive && factory.hasResults() && !err) {
+    llvm::outs() << "Files to modify:\n";
+    for (auto & pair : factory.results()) {
+      llvm::StringRef filename = pair.first;
+      llvm::outs() << "  " << filename << '\n';
+    }
+  }
+
+  // List failing files after we listed all the files that wil be modified so there easier to find
   if (runner.hasErrors()) {
     llvm::errs() << "Failing files:\n";
     for (auto & file : runner.getFailingFiles()) {
@@ -1569,12 +1579,8 @@ int main(int argc, char *argv[]) {
     return result;
   }
 
+  // If the user has enabled interactive mode ask before committing buffered changes
   if (interactive && factory.hasResults()) {
-    llvm::outs() << "Files to modify:\n";
-    for (auto & pair : factory.results()) {
-      llvm::StringRef filename = pair.first;
-      llvm::outs() << "  " << filename << '\n';
-    }
     char c;
     llvm::outs() << "Commit changes Yes, No?\n";
     while (true) {
