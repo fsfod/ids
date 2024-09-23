@@ -872,7 +872,8 @@ public:
     if (isAlreadyExported(D, true))
       return;
 
-    if(ShouldSkipDeclaration(D, true, D->getPointOfInstantiation()))
+    if (ShouldSkipDeclaration(D, true, D->getPointOfInstantiation()))
+      return;
 
     if (debuglog) {
       llvm::outs() << "  Inst: " << instLocation.path << ":" << instLocation.line << '\n';
