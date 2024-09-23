@@ -130,6 +130,11 @@ export_config_path("export-config",
   llvm::cl::value_desc("define"),
   llvm::cl::cat(idt::category));
 
+llvm::cl::opt<std::string>
+export_group_to_run("export-group",
+  llvm::cl::desc("Name of export group to generate for"),
+  llvm::cl::cat(idt::category));
+
 llvm::cl::list<std::string>
 ignored_headers("header-ignore",
   llvm::cl::desc("Ignore one or more header files"),
@@ -1525,6 +1530,13 @@ int main(int argc, char *argv[]) {
     
     llvm::SmallString<256> headerDirectory;
     std::vector<std::string> files;
+
+    if (!export_group_to_run.empty()) {
+      llvm::outs() << "Restricting generation to export config group \"" << export_group_to_run << "\"\n";
+      for (auto& group : exportOptions.getGroups()) {
+        group.Disabled = llvm::StringRef(group.Name).compare_insensitive(export_group_to_run) != 0;
+      }
+    }
 
     if (auto err = exportOptions.gatherAllFiles(sourcePathList, fileOptions)) {
       llvm::errs() << err;
