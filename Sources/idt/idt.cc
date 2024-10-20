@@ -130,9 +130,10 @@ export_config_path("export-config",
   llvm::cl::value_desc("define"),
   llvm::cl::cat(idt::category));
 
-llvm::cl::opt<std::string>
-export_group_to_run("export-group",
-  llvm::cl::desc("Name of export group to generate for"),
+llvm::cl::list<std::string>
+export_groups_to_run("export-groups",
+  llvm::cl::desc("Names of export group to generate for"),
+  llvm::cl::CommaSeparated,
   llvm::cl::cat(idt::category));
 
 llvm::cl::list<std::string>
@@ -211,7 +212,6 @@ static bool BuildIgnoredCXXRecordNames() {
   }
   return true;
 }
-
 
 namespace idt {
 class visitor : public clang::RecursiveASTVisitor<visitor> {
@@ -1455,6 +1455,7 @@ int main(int argc, char *argv[]) {
   using namespace llvm::sys::path;
 
 
+  // We can't use ZeroOrMore because compilation database isn't loaded when theres no arguments passed
   auto options =
       CommonOptionsParser::create(argc, const_cast<const char **>(argv),
                                   idt::category, llvm::cl::OneOrMore);
@@ -1534,11 +1535,33 @@ int main(int argc, char *argv[]) {
     llvm::SmallString<256> headerDirectory;
     std::vector<std::string> files;
 
-    if (!export_group_to_run.empty()) {
-      llvm::outs() << "Restricting generation to export config group \"" << export_group_to_run << "\"\n";
-      for (auto& group : exportOptions.getGroups()) {
-        group.Disabled = llvm::StringRef(group.Name).compare_insensitive(export_group_to_run) != 0;
+    if (!export_groups_to_run.empty()) {
+      llvm::outs() << "Restricting generation to export config groups: ";
+      llvm::StringMap<bool> groupNameSet;
+      std::string names;
+      for (const auto& name : export_groups_to_run) {
+        names += name + ", ";
+        groupNameSet[name] = false;
       }
+
+      llvm::outs() << names << "\n";
+
+      for (auto& group : exportOptions.getGroups()) {
+        if (groupNameSet.contains(group.Name)) {
+          group.Disabled = false;
+          groupNameSet[group.Name] = true;
+        } else {
+          group.Disabled = true;
+        }
+      }
+
+      for (auto& pair : groupNameSet) {
+        if (pair.second != true) {
+          llvm::errs() << "no export group named '" + pair.first() + "'\n";
+          return EXIT_FAILURE;
+        }
+      }
+
     }
 
     if (auto err = exportOptions.gatherAllFiles(sourcePathList, fileOptions)) {
