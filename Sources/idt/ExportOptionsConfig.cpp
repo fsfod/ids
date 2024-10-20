@@ -278,6 +278,7 @@ StringRef BaseExportOptions::createFullPath(StringRef path, SmallString<256> &pa
   } else {
     sys::path::append(pathBuff, rootDirectory, path);
   }
+  sys::path::remove_dots(pathBuff, true);
 
   std::replace(pathBuff.begin(), pathBuff.end(), '\\', '/');
   
