@@ -492,6 +492,26 @@ public:
         (exportMacro + " ").str());
   }
 
+  bool GetAttributeOffset(clang::Attr *Atrr, clang::SourceLocation &insertPoint) {
+    clang::SourceRange range = Atrr->getRange();
+    // Sadly the range end is often set to the start like for attributes declared through macros
+    auto start = GetFullExpansionLoc(range.getBegin());
+
+    // If the attribute is expanded from macro location won't be offset to attribute name
+    if (Atrr->getLoc().isMacroID() || Atrr->isKeywordAttribute()) {
+      insertPoint = start;
+    } else if (Atrr->isGNUAttribute()) {
+      // __attribute__((
+      insertPoint = start.getLocWithOffset(-15);
+    } else if (Atrr->isCXX11Attribute()) {
+      // [[
+      insertPoint = start.getLocWithOffset(-2);
+    } else {
+      return false;
+    }
+    return true;
+  }
+
   void ExportFunction(clang::FunctionDecl *D, llvm::StringRef exportMacro = "") {
     clang::FullSourceLoc location = GetFullExpansionLoc(D->getLocation());
 
@@ -499,43 +519,58 @@ public:
       exportMacro = options.ExportMacro;
     }
 
-    bool hasAttributes = false;
+    bool attachToName = func_macro_on_name;
+    clang::SourceLocation lastAttributeLoc;
+    clang::Attr *lastAttribute = nullptr;
     for (auto *Atrr : D->attrs()) {
-      if (Atrr->isInherited() || Atrr->isDeclspecAttribute())
+      if (Atrr->isInherited())
         continue;
 
-      if (Atrr->isGNUAttribute() || Atrr->isCXX11Attribute()) {
-        auto attribLoc = GetFullExpansionLoc(Atrr->getLoc());
+      auto attribLoc = GetFullExpansionLoc(Atrr->getLoc());
 
+      if (attribLoc > lastAttributeLoc) {
+        lastAttribute = Atrr;
+        lastAttributeLoc = attribLoc;
+      }
+
+      if (Atrr->isGNUAttribute() || Atrr->isCXX11Attribute() && !Atrr->isDeclspecAttribute()) {
         // If the attribute is after the parameters next to the opening brace
         // like this: char *getTraitName(TypeTrait T) __attribute__((__pure__));
         // we have to keep the export macro before the return type
-        if (attribLoc > location) {
+        if (attribLoc < location) {
           continue;
         }
-        hasAttributes = true;
+        attachToName = true;
         break;
       }      
     }
 
-    clang::SourceLocation insertion_point = insertion_point = D->getBeginLoc();
+    clang::SourceLocation insertionPoint = insertionPoint = D->getBeginLoc();
+    // Make sure to not insert a declspec before a c++ 11 style attribute on the function
+    if (lastAttribute && lastAttribute->isCXX11Attribute()) {
+      attachToName = true;
+    } else if (lastAttribute && !attachToName && !GetAttributeOffset(lastAttribute, insertionPoint)) {
+      LogSkippedDecl(D, location, "' unhandled attribute type to adjust insertion point for");
+      return;
+    }
+
     if (D->getTemplatedKind() != clang::FunctionDecl::TK_NonTemplate) {
-      insertion_point = D->getInnerLocStart();
-    } else if (func_macro_on_name || hasAttributes) {
+      insertionPoint = D->getInnerLocStart();
+    } else if (attachToName) {
       auto *nestedName = D->getQualifier();
       // Check if the function name is prefixed with a type or namespace 
       if (nestedName) {
         // Use namespace prefix starting location to insert at instead of the 
         // normal class name location that skips the name prefixes
-        insertion_point = D->getQualifierLoc().getBeginLoc();
+        insertionPoint = D->getQualifierLoc().getBeginLoc();
       } else {
-        insertion_point = D->getNameInfo().getBeginLoc();
+        insertionPoint = D->getNameInfo().getBeginLoc();
       }
     }
 
     unexported_public_interface(location)
       << D
-      << clang::FixItHint::CreateInsertion(insertion_point,
+      << clang::FixItHint::CreateInsertion(insertionPoint,
         (exportMacro + " ").str());
   }
 
