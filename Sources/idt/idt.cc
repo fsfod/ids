@@ -338,6 +338,7 @@ public:
     if (alreadyExported || options.ExportMembers)
       return true;
 
+    // TODO: Do we still need to export classes that have non weak vtables so data symbol is exported for the vtable
     bool requiresExport = status != UnexportedStatus::None || D->isAbstract();
 
     // Don't add DLL export to PoD structs that also have no methods
