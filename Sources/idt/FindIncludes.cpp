@@ -3,10 +3,13 @@
 
 #include "FindIncludes.h"
 #include "ExportOptionsConfig.h"
+#include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Frontend/TextDiagnostic.h"
 #include "clang/Frontend/TextDiagnosticBuffer.h"
 #include "clang/Frontend/TextDiagnosticPrinter.h"
+#include "clang/Tooling/CommonOptionsParser.h"
+#include "clang/Tooling/CompilationDatabase.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/ThreadPool.h"

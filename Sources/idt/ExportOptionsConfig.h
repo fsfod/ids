@@ -13,9 +13,10 @@
 #ifndef EXPORT_OPTIONS_CONFIG_H
 #define EXPORT_OPTIONS_CONFIG_H
 
-#include <clang/Format/Format.h>
-#include <llvm/ADT/SmallVector.h>
-#include <llvm/Support/Error.h>
+#include "clang/Format/Format.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/Support/Error.h"
 #include <string>
 #include <vector>
 

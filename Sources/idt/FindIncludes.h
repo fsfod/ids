@@ -4,12 +4,17 @@
 #include "clang/Tooling/Tooling.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/GlobPattern.h"
 #include <string>
 #include <vector>
+#include <mutex>
 
 namespace clang {
   class TextDiagnosticBuffer;
   class FrontendAction;
+  namespace tooling {
+  class CommonOptionsParser;
+  }
 }
 
 typedef std::pair<std::string, llvm::StringSet<>> FileIncludeResults;
