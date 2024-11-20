@@ -850,9 +850,6 @@ public:
   }
 
   bool VisitFunctionTemplateDecl(clang::FunctionTemplateDecl *D) {
-    if (D->isCXXClassMember())
-      return true;
-
     clang::FullSourceLoc location = get_location(D);
 
     if (source_manager_.isInSystemHeader(location))
