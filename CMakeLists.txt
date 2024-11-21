@@ -14,7 +14,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # Allow adding this project as a external project to the LLVM build system using LLVM_EXTERNAL_PROJECTS
-if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+if(PROJECT_IS_TOP_LEVEL)
   find_package(LLVM REQUIRED)
   message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
   message(STATUS "Using LLVMConfig.cmake in ${LLVM_DIR}")
@@ -25,12 +25,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 else()
   set(CLANG_INCLUDE_DIRS
     "${LLVM_EXTERNAL_CLANG_SOURCE_DIR}/include"
-    "${CMAKE_BINARY_DIR}/tools/clang/include"
-  )
+    "${CMAKE_BINARY_DIR}/tools/clang/include")
   set(LLVM_INCLUDE_DIRS
     "${CMAKE_SOURCE_DIR}/include"
-    "${CMAKE_BINARY_DIR}/include"
-  )
+    "${CMAKE_BINARY_DIR}/include")
 endif()
 
 add_subdirectory(Sources)
