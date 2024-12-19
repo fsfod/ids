@@ -1476,7 +1476,7 @@ public:
   }
 
   std::vector<clang::tooling::CompileCommand> getAllCompileCommands() const override {
-    throw std::logic_error("The method or operation is not implemented.");
+    return DB.getAllCompileCommands();
   }
 
 private:
