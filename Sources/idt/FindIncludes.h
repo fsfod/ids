@@ -116,7 +116,7 @@ public:
     return Results.end();
   }
 
-  typename const llvm::DenseMap<KeyT, ValueT> &results() {
+  const llvm::DenseMap<KeyT, ValueT> &results() {
     return Results;
   }
 
