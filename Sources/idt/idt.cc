@@ -546,7 +546,7 @@ public:
       }      
     }
 
-    clang::SourceLocation insertionPoint = insertionPoint = D->getBeginLoc();
+    clang::SourceLocation insertionPoint = D->getBeginLoc();
     // Make sure to not insert a declspec before a c++ 11 style attribute on the function
     if (lastAttribute && lastAttribute->isCXX11Attribute()) {
       attachToName = true;
