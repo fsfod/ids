@@ -1607,7 +1607,7 @@ int main(int argc, char *argv[]) {
    // }
   }
 
-  int result;
+  int result = 0;
   idt::factory factory(&fileOptions);
   ClangToolRunner runner;
   llvm::Error err = runner.runTool(*InferedDB.get(), factory, sourcePathList, thread_parallelism);
