@@ -514,13 +514,29 @@ llvm::Error HeaderPathMatcher::addDirectoryRoots(std::vector<std::string> &Direc
 
 Error HeaderPathMatcher::addPath(StringRef Path, PathMatchMode MatchMode) {
   llvm::SmallString<256> normalizedPath;
-  normalizedPath = Path;
-  std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
+
   auto pattenStart = Path.find_first_of("?*[{\\");
 
   if (pattenStart == std::string::npos) {
+    normalizedPath = Path;
+    sys::path::native(normalizedPath);
     PlainStrings.emplace_back(std::make_pair(MatchMode, normalizedPath.str().str()));
   } else {
+  // Normalize slashes in patten to how paths converted by sys::path::native are set
+#if defined(_WIN32)
+    size_t curr = 0;
+    size_t Found = Path.find('/', curr);
+
+    while (Found != StringRef::npos) {
+      normalizedPath.append(Path.substr(curr, Found - curr));
+      normalizedPath.append("\\\\");
+      curr = Found + 1;
+      Found = Path.find('/', curr);
+    }
+#else
+    normalizedPath = Path;
+    sys::path::native(normalizedPath);
+#endif
     auto err = addPathPatten(normalizedPath);
     if (err)
       return err;

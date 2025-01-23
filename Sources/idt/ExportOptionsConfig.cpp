@@ -280,11 +280,12 @@ StringRef BaseExportOptions::createFullPath(StringRef path, SmallString<256> &pa
   }
   sys::path::remove_dots(pathBuff, true);
 
-  std::replace(pathBuff.begin(), pathBuff.end(), '\\', '/');
-  
+  // Canonicalize native path to avoid mixed separator styles.
+  sys::path::native(pathBuff);
+
   size_t EndPathLength = path.size();
   size_t PathStart = pathBuff.size() - EndPathLength;
-  if (pathBuff[PathStart] == '//')
+  if (pathBuff[PathStart] == '//' || pathBuff[PathStart] == '/')
     PathStart++;
 
   return pathBuff.substr(PathStart, EndPathLength);
