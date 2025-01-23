@@ -173,6 +173,11 @@ func_macro_on_name("function-macro-on-name", llvm::cl::init(false),
   llvm::cl::desc("Change the attach point for function export macros to next to there name"),
   llvm::cl::cat(idt::category));
 
+llvm::cl::opt<bool>
+process_all_files("process-all-files", llvm::cl::init(false),
+  llvm::cl::desc("Process all files matched by export config"),
+  llvm::cl::cat(idt::category));
+
 llvm::cl::opt<int> thread_parallelism("threads", llvm::cl::init(0),
   llvm::cl::desc("Number of threads to use to process headers and source files"),
   llvm::cl::cat(idt::category));
@@ -1601,7 +1606,23 @@ int main(int argc, char *argv[]) {
       llvm::errs() << err;
       return EXIT_FAILURE;
     }
-    
+
+    if (!process_all_files) {
+      if (options->getSourcePathList().empty()) {
+        llvm::errs() << "Error no input file specified\n";
+        return EXIT_FAILURE;
+      }
+
+
+      for (const auto& path : options->getSourcePathList()) {
+        if (!fileOptions.contains(path)) {
+          llvm::errs() << "File belongs to no export group\n";
+          return EXIT_FAILURE;
+        }
+      }
+
+      sourcePathList = options->getSourcePathList();
+    }
    // if (!GatherHeaders(options.get(), sourcePathList)) {
     //  return EXIT_FAILURE;
    // }
