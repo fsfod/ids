@@ -24,7 +24,10 @@ llvm::Error ExportOptions::loadFromFile(StringRef path, ExportOptions& options) 
   if (std::error_code ec = bufferOrErr.getError())
     return make_error<StringError>("Error loading export options file:", ec);
 
-  options.RootDirectory = llvm::sys::path::parent_path(path).str();
+  Error err = options.setRootDirectory(llvm::sys::path::parent_path(path));
+  if (err) {
+    return err;
+  }
   return options.Load(bufferOrErr.get()->getBuffer());
 }
 
@@ -102,6 +105,18 @@ Error ExportOptions::Load(StringRef text) {
   }
 
   return Error::success();
+}
+
+Error ExportOptions::setRootDirectory(llvm::StringRef RootDirectory) {
+  SmallString<255> buffer = RootDirectory;
+
+  std::error_code ec = llvm::sys::fs::real_path(RootDirectory, buffer);
+  if (ec) {
+    return createStringError(ec, "Failed to resolve full path for export config root directory\n");
+  }
+  this->RootDirectory = buffer.str();
+
+  return tryLoadClangFormatFile();
 }
 
 Error ExportOptions::tryLoadClangFormatFile() {

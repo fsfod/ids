@@ -158,10 +158,7 @@ public:
   clang::format::FormatStyle* getClangFormatStyle();
 
   const std::string &getRootDirectory() { return RootDirectory; }
-  void setRootDirectory(llvm::StringRef RootDirectory) { 
-    this->RootDirectory = RootDirectory; 
-    tryLoadClangFormatFile();
-  }
+  llvm::Error setRootDirectory(llvm::StringRef RootDirectory);
   llvm::Error tryLoadClangFormatFile();
 
 private:
