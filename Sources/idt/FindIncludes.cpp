@@ -125,6 +125,10 @@ Error GatherFilesInDirectory(StringRef directory, std::vector<std::string> &foun
 
   SmallString<256> normalizedPath;
   llvm::sys::path::native(directory, normalizedPath);
+
+  if (!llvm::sys::path::is_separator(normalizedPath[normalizedPath.size()])) {
+    normalizedPath += llvm::sys::path::get_separator();
+  }
   int prefixSize = normalizedPath.size();
 
   for (recursive_directory_iterator F(directory, ec), E; F != E; F.increment(ec)) {
@@ -138,7 +142,6 @@ Error GatherFilesInDirectory(StringRef directory, std::vector<std::string> &foun
     StringRef path = F->path();
 
     normalizedPath = path; ;
-    std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
 
     if (Filter(normalizedPath.substr(prefixSize))) {
       llvm::outs() << "Skipped ignored file: " << path << "\n";
@@ -537,6 +540,7 @@ Error HeaderPathMatcher::addPath(StringRef Path, PathMatchMode MatchMode) {
     normalizedPath = Path;
     sys::path::native(normalizedPath);
 #endif
+
     auto err = addPathPatten(normalizedPath);
     if (err)
       return err;

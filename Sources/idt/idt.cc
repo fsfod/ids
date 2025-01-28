@@ -46,8 +46,7 @@ public:
       return DefaultExportOptions;
     }
 
-    auto it = FileExportOptions->find(file.getUniqueID());
-    return it != FileExportOptions->end() ? it->second : NULL;
+    return FileExportOptions->getFileOptions(file.getFileEntry().tryGetRealPathName());
   }
 
   BaseExportOptions *getDefaultExportOptions() {
@@ -1587,11 +1586,11 @@ int main(int argc, char *argv[]) {
       llvm::outs() << names << "\n";
 
       for (auto& group : exportOptions.getGroups()) {
-        if (groupNameSet.contains(group.Name)) {
-          group.Disabled = false;
-          groupNameSet[group.Name] = true;
+        if (groupNameSet.contains(group->Name)) {
+          group->Disabled = false;
+          groupNameSet[group->Name] = true;
         } else {
-          group.Disabled = true;
+          group->Disabled = true;
         }
       }
 
@@ -1615,9 +1614,12 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
       }
 
-
+      llvm::SmallString<255> buffer;
       for (const auto& path : options->getSourcePathList()) {
-        if (!fileOptions.contains(path)) {
+        buffer = path;
+        llvm::sys::path::native(buffer);
+
+        if (!fileOptions.contains(buffer)) {
           llvm::errs() << "File belongs to no export group\n";
           return EXIT_FAILURE;
         }

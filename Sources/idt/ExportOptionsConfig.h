@@ -72,6 +72,7 @@ public:
 
 struct BaseExportOptions {
   ExportOptions *Owner;
+  int Id;
   // optional
   std::vector<std::string> HeaderFiles;
   // If set appended to start of paths in HeaderFiles
@@ -127,11 +128,38 @@ struct HeaderGroupOptions : BaseExportOptions {
   llvm::Error gatherSourceFiles(std::vector<std::string> &files);
 };
 
-typedef llvm::DenseMap<llvm::sys::fs::UniqueID, BaseExportOptions*> FileOptionLookup;
+struct FileOptionEntry {
+  std::string Path;
+  BaseExportOptions *Group;
+  
+
+  FileOptionEntry(llvm::StringRef Path, BaseExportOptions *Group)
+    : Path(Path), Group(Group) {
+  }
+};
+
+class ExportOptions;
+
+class FileOptionLookup {
+public:
+  void addFile(llvm::StringRef file, BaseExportOptions *options);  
+  BaseExportOptions* getFileOptions(clang::FileEntryRef file);
+  BaseExportOptions* getFileOptions(llvm::StringRef path);
+  bool contains(llvm::StringRef path) { return getFileOptions(path) != nullptr; }
+
+  void getFilesForGroup(BaseExportOptions *Group, std::vector<llvm::StringRef> &files);
+
+private:
+  FileOptionEntry& insertOrUpdateEntry(llvm::StringRef path, BaseExportOptions *Group);
+
+  llvm::StringMap<int> Lookup;
+  std::vector<FileOptionEntry> Files;
+  ExportOptions* options;
+};
 
 struct RootExportOptions : BaseExportOptions {
   std::string ClangFormatFile;
-  std::vector<HeaderGroupOptions> Groups;
+  std::vector<std::unique_ptr<HeaderGroupOptions>> Groups;
 };
 
 class ExportOptions : public RootExportOptions {
@@ -145,14 +173,22 @@ public:
 
   void setOverridesAndDefaults(const BaseExportOptions &options);
   llvm::Error gatherAllFiles(std::vector<std::string> &allFiles, FileOptionLookup &fileOptions);
-  std::vector<HeaderGroupOptions>& getGroups() { return Groups; }
+  std::vector<std::unique_ptr<HeaderGroupOptions>>& getGroups() { return Groups; }
 
   HeaderGroupOptions *getGroup(llvm::StringRef name) {
     for (auto& group : Groups) {
-      if (name.compare_insensitive(group.Name) == 0)
-        return &group;
+      if (name.compare_insensitive(group->Name) == 0)
+        return group.get();
     }
     return nullptr;
+  }
+
+  BaseExportOptions *getGroup(int Id) {
+    if (Id == 0) {
+      return this;
+    } else {
+      return Groups[Id].get();
+    }
   }
 
   clang::format::FormatStyle* getClangFormatStyle();

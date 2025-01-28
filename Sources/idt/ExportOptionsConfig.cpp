@@ -90,15 +90,21 @@ Error ExportOptions::Load(StringRef text) {
   if (!fromJSON(*Val, *this, RootPath)) 
     return RootPath.getError();
 
-  if (!(Mapper.mapOptional("groups", Groups) &&
-        Mapper.mapOptional("clangFormatFile", ClangFormatFile)))
+  std::vector<HeaderGroupOptions> GroupList;
+
+  if (!(Mapper.mapOptional("groups", GroupList) &&
+    Mapper.mapOptional("clangFormatFile", ClangFormatFile)))
     return RootPath.getError();
 
-  // Just set this so code can simpler and not worry if there exports options is from a group or not
+  // Just set this so code can be simpler and not worry if there exports options is from a group or not
   Owner = this;
-  for (auto& group : Groups) {
+  Id = 0;
+  for (size_t i = 0; i < GroupList.size(); i++) {
+    HeaderGroupOptions &group = GroupList[i];
     group.Owner = this;
-  }
+    group.Id = i + 1;
+    Groups.emplace_back(std::make_unique<HeaderGroupOptions>(std::move(group)));
+  } 
 
   if (auto err = tryLoadClangFormatFile()) {
     return err;
@@ -158,7 +164,7 @@ void setDefault(std::optional<bool> &value, const std::optional<bool> &defaultVa
 }
 
 #define SET_OPTION_DEFAULT(fieldName, optName) \
-  setDefault(group.fieldName, fieldName);
+  setDefault(group->fieldName, fieldName);
 
 #define SET_OPTION_OVERRIDE(fieldName, optName) \
   setOverride(fieldName, options.fieldName);
@@ -175,7 +181,7 @@ void ExportOptions::setOverridesAndDefaults(const BaseExportOptions &options) {
 
   for (auto &group : Groups) {
     OVERRIDABLE_OPTIONS_LIST(SET_OPTION_DEFAULT);
-    group.OtherExportMacros.insert(group.OtherExportMacros.end(), OtherExportMacros.begin(), OtherExportMacros.end());
+    group->OtherExportMacros.insert(group->OtherExportMacros.end(), OtherExportMacros.begin(), OtherExportMacros.end());
   }
 }
 
@@ -238,7 +244,11 @@ Error HeaderGroupOptions::gatherDirectoryFiles(std::vector<std::string> &files, 
     if (auto Err = filter.addPaths(IgnoredFiles, PathMatchMode::End)) 
       return Err;
   }
-  filter.addDirectoryRoots(ExcludedDirectories);
+
+  Error err = filter.addDirectoryRoots(ExcludedDirectories);
+  if (err) {
+    return err;
+  }
 
   bool SkipRootFiles = false;
 
@@ -251,7 +261,7 @@ Error HeaderGroupOptions::gatherDirectoryFiles(std::vector<std::string> &files, 
       return true;
     }
     // Skip files in root directory and require them to explicitly be added
-    if (SkipRootFiles && !path.contains('/'))
+    if (SkipRootFiles && !sys::path::has_parent_path(path))
       return true;
     return filter.match(path);
   };
@@ -300,7 +310,7 @@ StringRef BaseExportOptions::createFullPath(StringRef path, SmallString<256> &pa
 
   size_t EndPathLength = path.size();
   size_t PathStart = pathBuff.size() - EndPathLength;
-  if (pathBuff[PathStart] == '//' || pathBuff[PathStart] == '/')
+  if (pathBuff[PathStart] == '\\' || pathBuff[PathStart] == '/')
     PathStart++;
 
   return pathBuff.substr(PathStart, EndPathLength);
@@ -327,27 +337,30 @@ Error BaseExportOptions::getHeaderFiles(std::vector<std::string> &files) {
   return Error::success();
 }
 
-Error ExportOptions::gatherAllFiles(std::vector<std::string> &allFiles, FileOptionLookup& fileOptions) {
-  clang::FileManager *FileMgr =
-    new clang::FileManager(clang::FileSystemOptions(), llvm::vfs::getRealFileSystem());
+static Error getFileRealPath(StringRef path, SmallString<255>& pathBuffer) {
+  pathBuffer.clear();
+  std::error_code EC = llvm::sys::fs::real_path(path, pathBuffer, true);
+  if (EC) {
+    return make_error<StringError>("Error getting real path for '" + path + "': ", EC);
+  }
 
+  return Error::success();
+}
+
+Error ExportOptions::gatherAllFiles(std::vector<std::string> &allFiles, FileOptionLookup& fileOptions) {
   std::vector<std::string> files;
 
-  for (HeaderGroupOptions &group : Groups) {
-    if (group.Disabled)
+  for (auto &group : Groups) {
+    if (group->Disabled)
       continue;
 
     files.clear();
-    if (auto err = group.gatherDirectoryFiles(files, false)) {
+    if (auto err = group->gatherDirectoryFiles(files, false)) {
       return err;
     }
 
     for (auto& path : files) {
-      auto fileRef = FileMgr->getFileRef(path);
-      if (!fileRef) 
-        return createStringError("Failed to get FileRef for '" + path + "': " + llvm::toString(fileRef.takeError()));
-
-      fileOptions[fileRef->getUniqueID()] = &group;
+      fileOptions.addFile(path, group.get());
       allFiles.push_back(std::move(path));
     }
   }
@@ -355,51 +368,105 @@ Error ExportOptions::gatherAllFiles(std::vector<std::string> &allFiles, FileOpti
   StringMap<HeaderGroupOptions*> sourceFiles;
   std::vector<std::string> SourceFileList;
 
-  for (int i = 0; i < Groups.size(); i++) {
-    HeaderGroupOptions &group = Groups[i];
-    if (group.Disabled)
+  for (auto &group : Groups) {
+    if (group->Disabled)
       continue;
 
     files.clear();
-    if (auto err = group.gatherSourceFiles(files)) {
+    if (auto err = group->gatherSourceFiles(files)) {
       return err;
     }
 
     for (auto &path : files) {
       SourceFileList.push_back(path);
-      sourceFiles.insert_or_assign(std::move(path), &group);
+      sourceFiles.insert_or_assign(std::move(path), group.get());
     }
   }
 
   if (auto Err = SoftFilterPotentialExports(SourceFileList))
     return Err;
 
-  for (auto& s : SourceFileList) {
-    auto fileRef = FileMgr->getFileRef(s);
-    if (!fileRef)
-      return createStringError("Failed to get FileRef for '" + s + "': " + llvm::toString(fileRef.takeError()));
-
-    fileOptions[fileRef->getUniqueID()] = sourceFiles[s];
-    allFiles.push_back(s);
+  for (auto& path : SourceFileList) {
+    fileOptions.addFile(path, sourceFiles[path]);
+    allFiles.push_back(path);
   }
+
   // Explicitly specified header files options should override any options from a HeaderDirectory group
-  for (HeaderGroupOptions &group : Groups) {
-    if (group.Disabled)
+  for (auto &group : Groups) {
+    if (group->Disabled)
       continue;
 
     files.clear();
-    Error err = group.getHeaderFiles(files);
+    Error err = group->getHeaderFiles(files);
     if (err)
       return err;
 
     for (auto& path : files) {
-      auto fileRef = FileMgr->getFileRef(path);
-      if (!fileRef)
-        return createStringError("Failed to get FileRef for '" + path + "': " + llvm::toString(fileRef.takeError()));
-      fileOptions[fileRef->getUniqueID()] = &group;
+      fileOptions.addFile(path, group.get());
       allFiles.push_back(std::move(path));
     }
   }
 
   return Error::success();
+}
+
+void FileOptionLookup::addFile(llvm::StringRef path, BaseExportOptions *options) {
+  insertOrUpdateEntry(path, options);
+
+  SmallString<255> pathBuffer;
+  llvm::sys::fs::real_path(path, pathBuffer, true);
+  // If the path has different case or has symbolic links in it, add the fully resolved path as well to the lookup.
+  if (pathBuffer.str() != path) {
+    insertOrUpdateEntry(pathBuffer, options);
+  }
+}
+
+FileOptionEntry& FileOptionLookup::insertOrUpdateEntry(llvm::StringRef path, BaseExportOptions *Group) {
+  auto Slot = Lookup.find(path);
+
+  if (Slot == Lookup.end()) {
+    Files.push_back(FileOptionEntry(path, Group));
+    Lookup[path.str()] = Files.size() - 1;
+    return Files.back();
+  } else {
+    Files[Slot->second].Group = Group;
+    return Files[Slot->second];
+  }
+}
+
+BaseExportOptions *FileOptionLookup::getFileOptions(clang::FileEntryRef file) {
+  StringRef RealName = file.getFileEntry().tryGetRealPathName();
+  if (RealName == "")
+    return nullptr;
+  return getFileOptions(RealName);
+}
+
+BaseExportOptions *FileOptionLookup::getFileOptions(llvm::StringRef path) {
+
+  auto it = Lookup.find(path);
+  if (it != Lookup.end()) {
+    return Files[it->second].Group;
+  }
+
+  SmallString<255> buffer;
+  std::error_code EC = llvm::sys::fs::real_path(path, buffer, true);
+  if (EC)
+    return nullptr;
+
+  it = Lookup.find(buffer);
+  if (it != Lookup.end()) {
+    return Files[it->second].Group;
+  }
+
+  return nullptr;
+}
+
+
+
+void FileOptionLookup::getFilesForGroup(BaseExportOptions *Group, std::vector<llvm::StringRef> &FileList) {
+  for (auto& file : Files) {
+    if (file.Group == Group) {
+      FileList.push_back(file.Path);
+    }
+  }
 }
