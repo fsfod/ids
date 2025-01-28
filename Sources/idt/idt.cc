@@ -620,6 +620,8 @@ public:
     if (isDefinition) {
       exportMacro = options.ExportTemplateMacro;
       defRange = clang::SourceRange(D->getTemplateKeywordLoc(), D->getLocation());
+      if(D->getTemplateKeywordLoc().isMacroID())
+        return true;
     } else {
       exportMacro = options.ExternTemplateMacro;
       if (!D->getExternKeywordLoc().isValid()) {
