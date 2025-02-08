@@ -9,7 +9,7 @@
 using namespace llvm::json;
 using namespace llvm;
 
-static bool fromJSON(const json::Value &E, BaseExportOptions &opts, json::Path P);
+static bool fromJSON(const json::Value &E, ExportGroup &opts, json::Path P);
 
 
 ExportOptions::ExportOptions() 
@@ -87,10 +87,11 @@ Error ExportOptions::Load(StringRef text) {
   Path::Root RootPath("ExportOptions");
   ObjectMapper Mapper(*Val, RootPath);
 
+  Owner = this;
   if (!fromJSON(*Val, *this, RootPath)) 
     return RootPath.getError();
 
-  std::vector<HeaderGroupOptions> GroupList;
+  std::vector<ExportGroup> GroupList;
 
   if (!(Mapper.mapOptional("groups", GroupList) &&
     Mapper.mapOptional("clangFormatFile", ClangFormatFile)))
@@ -100,10 +101,10 @@ Error ExportOptions::Load(StringRef text) {
   Owner = this;
   Id = 0;
   for (size_t i = 0; i < GroupList.size(); i++) {
-    HeaderGroupOptions &group = GroupList[i];
+    ExportGroup &group = GroupList[i];
     group.Owner = this;
     group.Id = i + 1;
-    Groups.emplace_back(std::make_unique<HeaderGroupOptions>(std::move(group)));
+    Groups.emplace_back(std::make_unique<ExportGroup>(std::move(group)));
   } 
 
   if (auto err = tryLoadClangFormatFile()) {
@@ -169,7 +170,7 @@ void setDefault(std::optional<bool> &value, const std::optional<bool> &defaultVa
 #define SET_OPTION_OVERRIDE(fieldName, optName) \
   setOverride(fieldName, options.fieldName);
 
-void ExportOptions::setOverridesAndDefaults(const BaseExportOptions &options) {
+void ExportOptions::setOverridesAndDefaults(const ExportGroup &options) {
 
   OVERRIDABLE_OPTIONS_LIST(SET_OPTION_OVERRIDE);
 
@@ -183,29 +184,6 @@ void ExportOptions::setOverridesAndDefaults(const BaseExportOptions &options) {
     OVERRIDABLE_OPTIONS_LIST(SET_OPTION_DEFAULT);
     group->OtherExportMacros.insert(group->OtherExportMacros.end(), OtherExportMacros.begin(), OtherExportMacros.end());
   }
-}
-
-bool fromJSON(const json::Value &E, HeaderGroupOptions &opts, json::Path P) {
-  ObjectMapper map(E, P);
-
-  if (!map.mapOptional("name", opts.Name))
-    return false;
-
-  if (!map.mapOptional("headerDirectories", opts.HeaderDirectories))
-    return false;
-
-  if (!map.mapOptional("sourceDirectories", opts.SourceDirectories))
-    return false;
-
-  if(!fromJSON(E, static_cast<BaseExportOptions&>(opts), P))
-    return false;
-
-  if (opts.HeaderFiles.empty() && opts.HeaderDirectories.empty() && opts.SourceDirectories.empty()) {
-    P.report("headerFiles or headerDirectories field must be defined and non empty");
-    return false;
-  }
-
-  return true;
 }
 
 template<typename T> bool MapEnumFlag(ObjectMapper &map, StringLiteral prop, T &enumField, T enumValue) {
@@ -222,8 +200,19 @@ template<typename T> bool MapEnumFlag(ObjectMapper &map, StringLiteral prop, T &
 
 #define READ_ALL_OPTIONAL_VALUES() (EXPORT_OPTION_LIST(READ_OPTION_ENTRY) true)
 
-bool fromJSON(const json::Value &E, BaseExportOptions &opts, json::Path P) {
+bool fromJSON(const json::Value &E, ExportGroup &opts, json::Path P) {
   ObjectMapper map(E, P);
+
+  if (!opts.isRootGroup()) {
+    if (!map.mapOptional("name", opts.Name))
+      return false;
+
+    if (!map.mapOptional("headerDirectories", opts.HeaderDirectories))
+      return false;
+
+    if (!map.mapOptional("sourceDirectories", opts.SourceDirectories))
+      return false;
+  }
 
   bool valid = READ_ALL_OPTIONAL_VALUES();
   if (!valid)
@@ -233,20 +222,34 @@ bool fromJSON(const json::Value &E, BaseExportOptions &opts, json::Path P) {
   if (!opts.ExportMacroHeader.empty() && !opts.AddExportHeaderInclude.has_value()) {
     opts.AddExportHeaderInclude = true;
   }
+
+  if (!opts.isRootGroup() && opts.HeaderFiles.empty() && opts.HeaderDirectories.empty() && opts.SourceDirectories.empty()) {
+    P.report("headerFiles or headerDirectories field must be defined and non empty");
+    return false;
+  }
+
   return true;
 }
 
-Error HeaderGroupOptions::gatherDirectoryFiles(std::vector<std::string> &files, bool sourceFiles) {
-  auto &DirList = sourceFiles ? SourceDirectories : HeaderDirectories;
-  HeaderPathMatcher filter;
-
+Error ExportGroup::createPathFilter(HeaderPathMatcher &filter) {
   if (!IgnoredFiles.empty()) {
-    if (auto Err = filter.addPaths(IgnoredFiles, PathMatchMode::End)) 
+    if (auto Err = filter.addPaths(IgnoredFiles, PathMatchMode::End))
       return Err;
   }
 
   Error err = filter.addDirectoryRoots(ExcludedDirectories);
   if (err) {
+    return err;
+  }
+
+  return Error::success();
+}
+
+llvm::Error ExportGroup::gatherDirectoryFiles(const std::vector<std::string> &directoryList, std::vector<std::string> &files, bool sourceFiles) {
+  auto &DirList = sourceFiles ? SourceDirectories : HeaderDirectories;
+  HeaderPathMatcher filter;
+
+  if (Error err = createPathFilter(filter)) {
     return err;
   }
 
@@ -268,13 +271,13 @@ Error HeaderGroupOptions::gatherDirectoryFiles(std::vector<std::string> &files, 
 
   llvm::SmallString<256> headerDirectory;
   // check if you user wanted us to recursively find all headers in our root folder or PathRoot
-  if (DirList.size() == 1 && DirList[0] == "*") {
+  if (directoryList.size() == 1 && directoryList[0] == "*") {
     createFullPath("", headerDirectory);
     SkipRootFiles = true;
     if (auto err = GatherFilesInDirectory(headerDirectory, files, FilterFunc))
       return err;
   } else {
-    for (auto& dirPath : DirList) {
+    for (auto& dirPath : directoryList) {
       createFullPath(dirPath, headerDirectory);
 
       if (auto err = GatherFilesInDirectory(headerDirectory, files, FilterFunc)) {
@@ -286,14 +289,7 @@ Error HeaderGroupOptions::gatherDirectoryFiles(std::vector<std::string> &files, 
   return Error::success();
 }
 
-llvm::Error HeaderGroupOptions::gatherSourceFiles(std::vector<std::string> &files) {
-  if (SourceDirectories.empty())
-    return Error::success();
-
-  return gatherDirectoryFiles(files, true);
-}
-
-StringRef BaseExportOptions::createFullPath(StringRef path, SmallString<256> &pathBuff) {
+StringRef ExportGroup::createFullPath(StringRef path, SmallString<256> &pathBuff) {
   pathBuff.clear();
 
   StringRef rootDirectory = Owner->getRootDirectory();
@@ -316,25 +312,60 @@ StringRef BaseExportOptions::createFullPath(StringRef path, SmallString<256> &pa
   return pathBuff.substr(PathStart, EndPathLength);
 }
 
-Error BaseExportOptions::getHeaderFiles(std::vector<std::string> &files) {
+llvm::Error ExportGroup::gatherFiles(bool ignoreMissing) {
   SmallString<256> pathBuff;
+  StringSet SeenHeaders;
+  bool hasMissing = false;
   for (auto& path : HeaderFiles) {
     createFullPath(path, pathBuff);
 
     if (!sys::fs::exists(pathBuff)) {
-      llvm::errs() << "File '" << path << "' in export_options.json headerFiles field does not exist.\n";
+      hasMissing = true;
+      if (ignoreMissing) {
+      } else {
+        llvm::errs() << "File '" << path << "' in specified in headerFiles field does not exist.\n";
+      }
       continue;
     }
 
     sys::fs::file_status fileStat;
-    if (std::error_code ec = llvm::sys::fs::status(pathBuff, fileStat)) {
+    std::error_code ec = llvm::sys::fs::status(pathBuff, fileStat);
+    if (ec) {
       return createStringError(ec, "Error while accessing file '" + path + "' listed in export_options.json headerFiles.\n");
     }
-    
-    files.push_back(pathBuff.str().str());
+    SeenHeaders.insert(pathBuff);
+    ExplicitHeaderPaths.push_back(pathBuff.str().str());
   }
 
-  return Error::success();
+  if (hasMissing && !ignoreMissing)
+    return createStringError("Header files in export group "  + getName() + " are missing");
+
+  std::vector<std::string> files;
+  if (auto err = gatherDirectoryFiles(HeaderDirectories, files, false)) {
+    return err;
+  }
+
+  // Don't add duplicate entries for files
+  for (auto& path : files) {
+    if (!SeenHeaders.contains(path)) {
+      HeaderPaths.push_back(std::move(path));
+    }
+  }
+
+  if (SourceDirectories.empty())
+    return Error::success();
+
+  return gatherDirectoryFiles(SourceDirectories, SourcePaths, true);
+}
+
+std::string ExportGroup::getName() {
+  if (isRootGroup()) {
+    return "Root";
+  } else if (!Name.empty()) {
+    return Name;
+  } else {
+    return std::to_string(Id);
+  }
 }
 
 static Error getFileRealPath(StringRef path, SmallString<255>& pathBuffer) {
@@ -347,48 +378,34 @@ static Error getFileRealPath(StringRef path, SmallString<255>& pathBuffer) {
   return Error::success();
 }
 
+Error ExportOptions::ScanForFiles() {
+  for (auto &group : Groups) {
+    if (group->Disabled)
+      continue;
+
+    Error err = group->gatherFiles(false);
+    if (err)
+      return err;
+  }
+
+  return Error::success();
+}
+
 Error ExportOptions::gatherAllFiles(std::vector<std::string> &allFiles, FileOptionLookup& fileOptions) {
-  std::vector<std::string> files;
 
   for (auto &group : Groups) {
     if (group->Disabled)
       continue;
 
-    files.clear();
-    if (auto err = group->gatherDirectoryFiles(files, false)) {
-      return err;
+    for (auto &path : group->SourcePaths) {
+      allFiles.push_back(path);
+      fileOptions.addFile(path, group.get(), false);
     }
 
-    for (auto& path : files) {
-      fileOptions.addFile(path, group.get());
-      allFiles.push_back(std::move(path));
+    for (auto& path : group->HeaderPaths) {
+      fileOptions.addFile(path, group.get(), true);
+      allFiles.push_back(path);
     }
-  }
-
-  StringMap<HeaderGroupOptions*> sourceFiles;
-  std::vector<std::string> SourceFileList;
-
-  for (auto &group : Groups) {
-    if (group->Disabled)
-      continue;
-
-    files.clear();
-    if (auto err = group->gatherSourceFiles(files)) {
-      return err;
-    }
-
-    for (auto &path : files) {
-      SourceFileList.push_back(path);
-      sourceFiles.insert_or_assign(std::move(path), group.get());
-    }
-  }
-
-  if (auto Err = SoftFilterPotentialExports(SourceFileList))
-    return Err;
-
-  for (auto& path : SourceFileList) {
-    fileOptions.addFile(path, sourceFiles[path]);
-    allFiles.push_back(path);
   }
 
   // Explicitly specified header files options should override any options from a HeaderDirectory group
@@ -396,36 +413,64 @@ Error ExportOptions::gatherAllFiles(std::vector<std::string> &allFiles, FileOpti
     if (group->Disabled)
       continue;
 
-    files.clear();
-    Error err = group->getHeaderFiles(files);
-    if (err)
-      return err;
-
-    for (auto& path : files) {
-      fileOptions.addFile(path, group.get());
-      allFiles.push_back(std::move(path));
+    for (auto& path : group->ExplicitHeaderPaths) {
+      if (!fileOptions.contains(path)) {
+        allFiles.push_back(path);
+      }
+      fileOptions.addFile(path, group.get(), true);
     }
   }
-
+  
   return Error::success();
 }
 
-void FileOptionLookup::addFile(llvm::StringRef path, BaseExportOptions *options) {
-  insertOrUpdateEntry(path, options);
 
-  SmallString<255> pathBuffer;
-  llvm::sys::fs::real_path(path, pathBuffer, true);
-  // If the path has different case or has symbolic links in it, add the fully resolved path as well to the lookup.
-  if (pathBuffer.str() != path) {
-    insertOrUpdateEntry(pathBuffer, options);
+static void printField(StringRef fieldName, std::optional<bool>& field) {
+  if (field.has_value()) {
+    llvm::outs() << "  " << fieldName << ": " << (field.value() ? "true" : "false") << "\n";
   }
 }
 
-FileOptionEntry& FileOptionLookup::insertOrUpdateEntry(llvm::StringRef path, BaseExportOptions *Group) {
+static void printField(StringRef fieldName, StringRef field) {
+  if (!field.empty()) {
+    llvm::outs() << "  " << fieldName << ": " << field << "\n";
+  }
+}
+
+static void printField(StringRef fieldName, std::vector<std::string>& field) {
+  if (!field.empty()) {
+    llvm::outs() << "  " << fieldName << ":\n";
+    for (auto& item : field) {
+      llvm::outs() << "    " << item << "\n";
+    }
+  }
+}
+
+#define PRINT_FIELD(field, fieldName) printField(#fieldName, field);
+
+void ExportGroup::dump() {
+  OVERRIDABLE_OPTIONS_LIST(PRINT_FIELD);
+  printField("HeaderPaths", HeaderPaths);
+  printField("ExplicitHeaderPaths", ExplicitHeaderPaths);
+  printField("SourcePaths", SourcePaths);
+}
+
+void FileOptionLookup::addFile(llvm::StringRef file, ExportGroup *options, bool isheader) {
+  insertOrUpdateEntry(file, options, isheader);
+
+  SmallString<255> pathBuffer;
+  llvm::sys::fs::real_path(file, pathBuffer, true);
+  // If the path has different case or has symbolic links in it, add the fully resolved path as well to the lookup.
+  if (pathBuffer.str() != file) {
+    insertOrUpdateEntry(pathBuffer, options, isheader);
+  }
+}
+
+FileOptionEntry& FileOptionLookup::insertOrUpdateEntry(llvm::StringRef path, ExportGroup *Group, bool isHeader) {
   auto Slot = Lookup.find(path);
 
   if (Slot == Lookup.end()) {
-    Files.push_back(FileOptionEntry(path, Group));
+    Files.push_back(FileOptionEntry(path, Group, isHeader));
     Lookup[path.str()] = Files.size() - 1;
     return Files.back();
   } else {
@@ -434,14 +479,14 @@ FileOptionEntry& FileOptionLookup::insertOrUpdateEntry(llvm::StringRef path, Bas
   }
 }
 
-BaseExportOptions *FileOptionLookup::getFileOptions(clang::FileEntryRef file) {
+ExportGroup *FileOptionLookup::getFileOptions(clang::FileEntryRef file) {
   StringRef RealName = file.getFileEntry().tryGetRealPathName();
   if (RealName == "")
     return nullptr;
   return getFileOptions(RealName);
 }
 
-BaseExportOptions *FileOptionLookup::getFileOptions(llvm::StringRef path) {
+ExportGroup *FileOptionLookup::getFileOptions(llvm::StringRef path) {
 
   auto it = Lookup.find(path);
   if (it != Lookup.end()) {
@@ -461,9 +506,7 @@ BaseExportOptions *FileOptionLookup::getFileOptions(llvm::StringRef path) {
   return nullptr;
 }
 
-
-
-void FileOptionLookup::getFilesForGroup(BaseExportOptions *Group, std::vector<llvm::StringRef> &FileList) {
+void FileOptionLookup::getFilesForGroup(ExportGroup *Group, std::vector<llvm::StringRef> &FileList) {
   for (auto& file : Files) {
     if (file.Group == Group) {
       FileList.push_back(file.Path);

@@ -33,15 +33,15 @@
 
 class ResultCollector : public ThreadSafeToolResults<std::string, std::string> {
 public:
-  ResultCollector(FileOptionLookup *fileOptions, BaseExportOptions *exportOptions = nullptr)
+  ResultCollector(FileOptionLookup *fileOptions, ExportGroup *exportOptions = nullptr)
     : FileExportOptions(fileOptions), DefaultExportOptions(exportOptions) {
   }
 
-  ResultCollector(BaseExportOptions *exportOptions)
+  ResultCollector(ExportGroup *exportOptions)
     : FileExportOptions(nullptr), DefaultExportOptions(exportOptions) {
   }
 
-  BaseExportOptions *getFileExportOptions(clang::FileEntryRef file) {
+  ExportGroup *getFileExportOptions(clang::FileEntryRef file) {
     if (!FileExportOptions) {
       return DefaultExportOptions;
     }
@@ -49,20 +49,20 @@ public:
     return FileExportOptions->getFileOptions(file.getFileEntry().tryGetRealPathName());
   }
 
-  BaseExportOptions *getDefaultExportOptions() {
+  ExportGroup *getDefaultExportOptions() {
     return DefaultExportOptions;
   }
 
 protected:
   FileOptionLookup *FileExportOptions;
-  BaseExportOptions *DefaultExportOptions;
+  ExportGroup *DefaultExportOptions;
 };
 
 namespace idt {
 llvm::cl::OptionCategory category{"interface definition scanner options"};
 }
 
-BaseExportOptions baseOptions;
+ExportGroup baseOptions;
 
 namespace {
 
@@ -133,6 +133,11 @@ llvm::cl::list<std::string>
 export_groups_to_run("export-groups",
   llvm::cl::desc("Names of export group to generate for"),
   llvm::cl::CommaSeparated,
+  llvm::cl::cat(idt::category));
+
+llvm::cl::opt<std::string>
+dump_group("dump-group",
+  llvm::cl::desc("Dump parsed export group fields to console output"),
   llvm::cl::cat(idt::category));
 
 llvm::cl::list<std::string>
@@ -222,7 +227,7 @@ class visitor : public clang::RecursiveASTVisitor<visitor> {
   clang::ASTContext &context_;
   clang::SourceManager &source_manager_;
   clang::Sema *sema;
-  BaseExportOptions &options;
+  ExportGroup &options;
   bool skip_function_bodies;
 
   clang::DiagnosticBuilder
@@ -253,7 +258,7 @@ class visitor : public clang::RecursiveASTVisitor<visitor> {
   }
 
 public:
-  explicit visitor(clang::ASTContext &context, BaseExportOptions &options,  bool skipFuncBodies)
+  explicit visitor(clang::ASTContext &context, ExportGroup &options,  bool skipFuncBodies)
       : context_(context), source_manager_(context.getSourceManager()), sema(nullptr), 
         skip_function_bodies(skipFuncBodies), options(options) {
 
@@ -1317,11 +1322,11 @@ class consumer : public clang::SemaConsumer {
   idt::visitor visitor_;
   ResultCollector &owner;
   fixit_options options_;
-  BaseExportOptions &exportOption;
+  ExportGroup &exportOption;
   std::unique_ptr<clang::FixItRewriter2> rewriter_;
 
 public:
-  explicit consumer(clang::ASTContext &context, BaseExportOptions &exportOptions, bool skipFunctionBodies, ResultCollector &owner)
+  explicit consumer(clang::ASTContext &context, ExportGroup &exportOptions, bool skipFunctionBodies, ResultCollector &owner)
       : visitor_(context, exportOptions, skipFunctionBodies), owner(owner), exportOption(exportOptions) {}
 
   void HandleTranslationUnit(clang::ASTContext &context) override {
@@ -1396,7 +1401,7 @@ struct action : clang::ASTFrontendAction {
 
   }
 
-  BaseExportOptions *exportOptions;
+  ExportGroup *exportOptions;
 
 #define DEFINE_EXPORRT_MACRO(fieldName, optName) \
     if (!exportOptions->fieldName.empty() && !seenMacros.contains(exportOptions->fieldName)) { \
@@ -1594,6 +1599,7 @@ int main(int argc, char *argv[]) {
         }
       }
 
+
       for (auto& pair : groupNameSet) {
         if (pair.second != true) {
           llvm::errs() << "no export group named '" + pair.first() + "'\n";
@@ -1606,6 +1612,16 @@ int main(int argc, char *argv[]) {
     if (auto err = exportOptions.gatherAllFiles(sourcePathList, fileOptions)) {
       llvm::errs() << err;
       return EXIT_FAILURE;
+    }
+
+    if (!dump_group.empty()) {
+      ExportGroup *group = exportOptions.getGroup(dump_group);
+      if (!group) {
+        llvm::errs() << "Error no group named '" << dump_group  << "' to dump\n";
+        return EXIT_FAILURE;
+      }
+      group->dump();
+      return EXIT_SUCCESS;
     }
 
     if (!process_all_files) {

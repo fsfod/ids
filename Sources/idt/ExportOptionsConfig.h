@@ -70,16 +70,26 @@ public:
   }
 };
 
-struct BaseExportOptions {
+class HeaderPathMatcher;
+
+struct ExportGroup {
   ExportOptions *Owner;
   int Id;
+  // optional Name of the group, more than one group can have the same name
+  std::string Name;
+
+  // optional if a global export macro is defined
+  std::string ExportMacro;
   // optional
   std::vector<std::string> HeaderFiles;
+  // HeaderDirectories or HeaderFiles is required
+  std::vector<std::string> HeaderDirectories;
+  std::vector<std::string> SourceDirectories;
   // If set appended to start of paths in HeaderFiles
   std::string PathRoot;
+  // The header that must be included for the export macro declarations
+  // an include of this will be added to any files that get export annotations added
   std::string ExportMacroHeader;
-  // optional if a global export macro is defined
-  std::string ExportMacro;         
   std::string ClassMacro;          
   // optional
   std::string ExternTemplateMacro;
@@ -87,7 +97,7 @@ struct BaseExportOptions {
   std::string ExternCMacro;
   // optional
   std::string ExportTemplateMacro; 
-  // optional used on global varibles and optionally on static class variables if
+  // optional used on global variables and optionally on static class variables if
   // ClassDataMacro is not set
   std::string DataMacro;
   // optional used on static class variables
@@ -111,30 +121,38 @@ struct BaseExportOptions {
   BoolOption ForceExportClassData;
   BoolOption ExportGlobalVariableDefs;
 
-  BaseExportOptions() {
+  // List of header and source file found on disk matched from the pattens this group declares
+  std::vector<std::string> HeaderPaths;
+  // List of headers explicitly specified by name these will claim ownership of the files to this group over another
+  // group matching them by found by directory path wildcard
+  std::vector<std::string> ExplicitHeaderPaths;
+  std::vector<std::string> SourcePaths;
+
+  ExportGroup()
+    : Id(-1) , Owner(nullptr) {
   }
 
-  llvm::StringRef createFullPath(llvm::StringRef path, llvm::SmallString<256> &pathBuff);
-  llvm::Error getHeaderFiles(std::vector<std::string> &files);
-};
+  std::string getName();
+  bool isRootGroup() {
+    return reinterpret_cast<ExportGroup *>(Owner) == this;
+  }
 
-struct HeaderGroupOptions : BaseExportOptions {
-  // optional
-  std::string Name;
-  // HeaderDirectories or Headers is required
-  std::vector<std::string> HeaderDirectories;
-  std::vector<std::string> SourceDirectories;
-  llvm::Error gatherDirectoryFiles(std::vector<std::string> &files, bool soureceFiles);
-  llvm::Error gatherSourceFiles(std::vector<std::string> &files);
+  llvm::Error gatherFiles(bool ignoreMissing);
+  llvm::Error createPathFilter(HeaderPathMatcher &filter);
+  llvm::Error gatherDirectoryFiles(const std::vector<std::string> &directoryList, std::vector<std::string> &files, bool soureceFiles);
+  void dump();
+
+private:
+  llvm::StringRef createFullPath(llvm::StringRef path, llvm::SmallString<256>& pathBuff);
 };
 
 struct FileOptionEntry {
   std::string Path;
-  BaseExportOptions *Group;
-  
+  ExportGroup *Group;
+  bool IsHeader;
 
-  FileOptionEntry(llvm::StringRef Path, BaseExportOptions *Group)
-    : Path(Path), Group(Group) {
+  FileOptionEntry(llvm::StringRef Path, ExportGroup *Group, bool IsHeader)
+    : Path(Path), Group(Group), IsHeader(IsHeader) {
   }
 };
 
@@ -142,24 +160,24 @@ class ExportOptions;
 
 class FileOptionLookup {
 public:
-  void addFile(llvm::StringRef file, BaseExportOptions *options);  
-  BaseExportOptions* getFileOptions(clang::FileEntryRef file);
-  BaseExportOptions* getFileOptions(llvm::StringRef path);
+  void addFile(llvm::StringRef file, ExportGroup *options, bool isheader);  
+  ExportGroup* getFileOptions(clang::FileEntryRef file);
+  ExportGroup* getFileOptions(llvm::StringRef path);
   bool contains(llvm::StringRef path) { return getFileOptions(path) != nullptr; }
 
-  void getFilesForGroup(BaseExportOptions *Group, std::vector<llvm::StringRef> &files);
+  void getFilesForGroup(ExportGroup *Group, std::vector<llvm::StringRef> &files);
 
 private:
-  FileOptionEntry& insertOrUpdateEntry(llvm::StringRef path, BaseExportOptions *Group);
+  FileOptionEntry& insertOrUpdateEntry(llvm::StringRef path, ExportGroup *Group, bool isHeader);
 
   llvm::StringMap<int> Lookup;
   std::vector<FileOptionEntry> Files;
   ExportOptions* options;
 };
 
-struct RootExportOptions : BaseExportOptions {
+struct RootExportOptions : ExportGroup {
   std::string ClangFormatFile;
-  std::vector<std::unique_ptr<HeaderGroupOptions>> Groups;
+  std::vector<std::unique_ptr<ExportGroup>> Groups;
 };
 
 class ExportOptions : public RootExportOptions {
@@ -171,11 +189,13 @@ public:
   static llvm::Error loadFromDirectory(const std::string &path, ExportOptions& options);
   static bool directoryHasExportConfig(const std::string &path);
 
-  void setOverridesAndDefaults(const BaseExportOptions &options);
+  void setOverridesAndDefaults(const ExportGroup &options);
+  llvm::Error ScanForFiles();
   llvm::Error gatherAllFiles(std::vector<std::string> &allFiles, FileOptionLookup &fileOptions);
-  std::vector<std::unique_ptr<HeaderGroupOptions>>& getGroups() { return Groups; }
+  void dump();
+  std::vector<std::unique_ptr<ExportGroup>>& getGroups() { return Groups; }
 
-  HeaderGroupOptions *getGroup(llvm::StringRef name) {
+  ExportGroup *getGroup(llvm::StringRef name) {
     for (auto& group : Groups) {
       if (name.compare_insensitive(group->Name) == 0)
         return group.get();
@@ -183,11 +203,11 @@ public:
     return nullptr;
   }
 
-  BaseExportOptions *getGroup(int Id) {
+  ExportGroup *getGroup(int Id) {
     if (Id == 0) {
       return this;
     } else {
-      return Groups[Id].get();
+      return Groups[Id-1].get();
     }
   }
 
