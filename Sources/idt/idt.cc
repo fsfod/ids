@@ -1609,6 +1609,11 @@ int main(int argc, char *argv[]) {
 
     }
 
+    if (auto err = exportOptions.scanForFiles()) {
+      llvm::errs() << err;
+      return EXIT_FAILURE;
+    }
+
     if (auto err = exportOptions.gatherAllFiles(sourcePathList, fileOptions)) {
       llvm::errs() << err;
       return EXIT_FAILURE;

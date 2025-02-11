@@ -378,7 +378,7 @@ static Error getFileRealPath(StringRef path, SmallString<255>& pathBuffer) {
   return Error::success();
 }
 
-Error ExportOptions::ScanForFiles() {
+Error ExportOptions::scanForFiles() {
   for (auto &group : Groups) {
     if (group->Disabled)
       continue;

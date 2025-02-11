@@ -190,7 +190,7 @@ public:
   static bool directoryHasExportConfig(const std::string &path);
 
   void setOverridesAndDefaults(const ExportGroup &options);
-  llvm::Error ScanForFiles();
+  llvm::Error scanForFiles();
   llvm::Error gatherAllFiles(std::vector<std::string> &allFiles, FileOptionLookup &fileOptions);
   void dump();
   std::vector<std::unique_ptr<ExportGroup>>& getGroups() { return Groups; }
